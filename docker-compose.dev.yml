@@ -25,6 +25,8 @@ services:
     volumes:
       - .:/app
       - node_modules:/app/node_modules
+      - client_node_modules:/app/client/node_modules
+      - server_node_modules:/app/server/node_modules
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,4 +92,6 @@ networks:
 
 volumes:
   node_modules:
+  client_node_modules:
+  server_node_modules:
   postgres_dev_data:
