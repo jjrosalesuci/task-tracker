@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskMatrix {
+  PERSONAL
+  WORK
+}
+
+enum TaskStatus {
+  PENDING
+  COMPLETED
+}
+
+model User {
+  id                  String               @id @default(uuid()) @db.Uuid
+  email               String               @unique
+  passwordHash        String
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  sessions            Session[]
+  ownedTasks          Task[]               @relation("TaskOwner")
+  assignedTasks       Task[]               @relation("TaskAssignee")
+  passwordResetTokens PasswordResetToken[]
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique
+  userId    String   @db.Uuid
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Task {
+  id           String     @id @default(uuid()) @db.Uuid
+  title        String
+  description  String?
+  matrix       TaskMatrix
+  urgent       Boolean    @default(false)
+  important    Boolean    @default(false)
+  status       TaskStatus @default(PENDING)
+  completedAt    DateTime?
+  dueDate      DateTime?
+  position     Int
+  ownerId      String     @db.Uuid
+  assignedToId String?    @db.Uuid
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  owner        User       @relation("TaskOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  assignedTo   User?      @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, matrix, status, position])
+  @@index([assignedToId, status])
+  @@index([dueDate])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique
+  userId    String    @db.Uuid
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}

@@ -1,0 +1,76 @@
+services:
+  dealgine:
+    build:
+      context: .
+      target: production
+    image: dealgine:latest
+    container_name: dealgine
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL en el archivo .env}
+      APP_ORIGIN: ${APP_ORIGIN:-https://dealgine.aseresoft.com}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+      PASSWORD_RESET_TTL_MINUTES: ${PASSWORD_RESET_TTL_MINUTES:-30}
+      SMTP_HOST: ${SMTP_HOST:?Define SMTP_HOST en el archivo .env}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Dealgine <no-reply@dealgine.aseresoft.com>}
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const net=require('net');const s=net.connect(3000,'127.0.0.1',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - proxy
+      - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.dealgine.rule=Host(`dealgine.aseresoft.com`)"
+      - "traefik.http.routers.dealgine.entrypoints=websecure"
+      - "traefik.http.routers.dealgine.tls=true"
+      - "traefik.http.routers.dealgine.tls.certresolver=letsencrypt"
+      - "traefik.http.services.dealgine.loadbalancer.server.port=3000"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles:
+      - local-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dealgine}
+      POSTGRES_USER: ${POSTGRES_USER:-dealgine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - backend
+
+networks:
+  proxy:
+    external: true
+    name: proxy
+  backend:
+    internal: true
+
+volumes:
+  postgres_data:
