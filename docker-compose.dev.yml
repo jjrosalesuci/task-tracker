@@ -1,10 +1,10 @@
 services:
-  dealgine:
+  task-tracker:
     build:
       context: .
       target: development
-    image: dealgine:dev
-    container_name: dealgine-dev
+    image: task-tracker:dev
+    container_name: task-tracker-dev
     command: npm run dev
     restart: unless-stopped
     environment:

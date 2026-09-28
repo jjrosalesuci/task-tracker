@@ -107,10 +107,44 @@ tasksRouter.post("/", validate(createTaskSchema), async (req, res, next) => {
   }
 });
 
+tasksRouter.post("/reorder/batch", validate(reorderTasksSchema), async (req, res, next) => {
+  try {
+    const ids = req.body.items.map((item: { id: string }) => item.id);
+    const tasks = await prisma.task.findMany({ where: { id: { in: ids } } });
+    if (tasks.length !== ids.length) throw new HttpError(404, "One or more tasks not found", "NOT_FOUND");
+    tasks.forEach((task) => assertOwner(task, req.user!.id));
+    await prisma.$transaction(
+      req.body.items.map((item: { id: string; position: number }) =>
+        prisma.task.update({ where: { id: item.id }, data: { position: item.position } }),
+      ),
+    );
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+tasksRouter.patch("/reorder", validate(reorderTasksSchema), async (req, res, next) => {
+  try {
+    const ids = req.body.items.map((item: { id: string }) => item.id);
+    const tasks = await prisma.task.findMany({ where: { id: { in: ids } } });
+    if (tasks.length !== ids.length) throw new HttpError(404, "One or more tasks not found", "NOT_FOUND");
+    tasks.forEach((task) => assertOwner(task, req.user!.id));
+    await prisma.$transaction(
+      req.body.items.map((item: { id: string; position: number }) =>
+        prisma.task.update({ where: { id: item.id }, data: { position: item.position } }),
+      ),
+    );
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
 tasksRouter.get("/:id", validate(taskIdParamsSchema, "params"), async (req, res, next) => {
   try {
     const task = await prisma.task.findUnique({
-      where: { id: req.params.id },
+      where: { id: req.params.id as string },
       include: publicTaskInclude,
     });
     if (!task) throw new HttpError(404, "Task not found", "NOT_FOUND");
@@ -127,7 +161,7 @@ tasksRouter.patch(
   validate(updateTaskSchema),
   async (req, res, next) => {
     try {
-      const existing = await prisma.task.findUnique({ where: { id: req.params.id } });
+      const existing = await prisma.task.findUnique({ where: { id: req.params.id as string } });
       if (!existing) throw new HttpError(404, "Task not found", "NOT_FOUND");
       assertCanUpdateTask(existing, req.user!.id, Object.keys(req.body));
       await assertAssigneeExists(req.body.assignedToId);
@@ -163,7 +197,7 @@ tasksRouter.patch(
   validate(taskStatusSchema),
   async (req, res, next) => {
     try {
-      const existing = await prisma.task.findUnique({ where: { id: req.params.id } });
+      const existing = await prisma.task.findUnique({ where: { id: req.params.id as string } });
       if (!existing) throw new HttpError(404, "Task not found", "NOT_FOUND");
       assertCanUpdateTask(existing, req.user!.id, ["status"]);
       const task = await prisma.task.update({
@@ -183,44 +217,10 @@ tasksRouter.patch(
 
 tasksRouter.delete("/:id", validate(taskIdParamsSchema, "params"), async (req, res, next) => {
   try {
-    const task = await prisma.task.findUnique({ where: { id: req.params.id } });
+    const task = await prisma.task.findUnique({ where: { id: req.params.id as string } });
     if (!task) throw new HttpError(404, "Task not found", "NOT_FOUND");
     assertOwner(task, req.user!.id);
     await prisma.task.delete({ where: { id: task.id } });
-    res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-});
-
-tasksRouter.post("/reorder/batch", validate(reorderTasksSchema), async (req, res, next) => {
-  try {
-    const ids = req.body.items.map((item: { id: string }) => item.id);
-    const tasks = await prisma.task.findMany({ where: { id: { in: ids } } });
-    if (tasks.length !== ids.length) throw new HttpError(404, "One or more tasks not found", "NOT_FOUND");
-    tasks.forEach((task) => assertOwner(task, req.user!.id));
-    await prisma.$transaction(
-      req.body.items.map((item: { id: string; position: number }) =>
-        prisma.task.update({ where: { id: item.id }, data: { position: item.position } }),
-      ),
-    );
-    res.status(204).send();
-  } catch (error) {
-    next(error);
-  }
-});
-
-tasksRouter.patch("/reorder", validate(reorderTasksSchema), async (req, res, next) => {
-  try {
-    const ids = req.body.items.map((item: { id: string }) => item.id);
-    const tasks = await prisma.task.findMany({ where: { id: { in: ids } } });
-    if (tasks.length !== ids.length) throw new HttpError(404, "One or more tasks not found", "NOT_FOUND");
-    tasks.forEach((task) => assertOwner(task, req.user!.id));
-    await prisma.$transaction(
-      req.body.items.map((item: { id: string; position: number }) =>
-        prisma.task.update({ where: { id: item.id }, data: { position: item.position } }),
-      ),
-    );
     res.status(204).send();
   } catch (error) {
     next(error);

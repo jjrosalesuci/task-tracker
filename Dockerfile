@@ -7,7 +7,9 @@ FROM base AS dependencies
 COPY package*.json ./
 COPY client/package*.json ./client/
 COPY server/package*.json ./server/
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+COPY server/prisma ./server/prisma
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi \
+    && npm run db:generate
 
 FROM dependencies AS development
 ENV NODE_ENV=development

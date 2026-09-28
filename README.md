@@ -58,7 +58,7 @@ El código fuente se monta en `/app` y las dependencias permanecen en un volumen
 Docker. Para aplicar migraciones:
 
 ```bash
-docker compose -f docker-compose.dev.yml exec dealgine npm run db:migrate
+docker compose -f docker-compose.dev.yml exec task-tracker npm run db:migrate
 ```
 
 Para detener el entorno conservando datos:

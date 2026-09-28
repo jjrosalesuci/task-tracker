@@ -6,7 +6,8 @@ import { Spinner } from './components/Spinner'
 import { useAuth } from './contexts/AuthContext'
 import { useI18n } from './contexts/I18nContext'
 import { navigate, useRoute } from './hooks/useRoute'
-import { api, ApiError } from './lib/api'
+import { api } from './lib/api'
+import { quadrantFromFlags, shouldWarnTaskCount } from './lib/task-utils'
 import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from './pages/AuthPages'
 import type { Quadrant, Scope, Task, User } from './types'
 
@@ -18,7 +19,7 @@ const quadrants: { key: Quadrant; urgent: boolean; important: boolean; title: 'u
 ]
 
 function fromApi(task: any): Task {
-  const quadrant: Quadrant = task.urgent && task.important ? 'urgent-important' : task.important ? 'not-urgent-important' : task.urgent ? 'urgent-not-important' : 'not-urgent-not-important'
+  const quadrant = quadrantFromFlags(task.urgent, task.important)
   return { id: task.id, title: task.title, description: task.description, scope: task.matrix === 'WORK' ? 'professional' : 'personal', quadrant, completed: task.status === 'COMPLETED', position: task.position, dueDate: task.dueDate, ownerId: task.ownerId, owner: task.owner, assignee: task.assignedTo, assigneeEmail: task.assignedTo?.email, createdAt: task.createdAt, updatedAt: task.updatedAt }
 }
 
@@ -120,9 +121,9 @@ function AppShell() {
     <main id="main" className="workspace">
       <div className="workspace-heading"><div><p className="eyebrow">{view === 'assigned' ? t('assigned') : t('overview')}</p><h1>{t('welcome', { name: user?.email.split('@')[0] ?? '' })}</h1></div><button className="button button-primary" onClick={() => setEditing(null)} disabled={view === 'assigned'}><Icon name="plus" />{t('newTask')}</button></div>
       <div className="scope-tabs" role="tablist">{(['personal', 'professional'] as Scope[]).map((item) => <button key={item} role="tab" aria-selected={scope === item} className={scope === item ? 'scope-tab active' : 'scope-tab'} onClick={() => setScope(item)}>{t(item)}</button>)}</div>
-      {error && <ErrorBanner error={error} onRetry={() => void load()} />}
+      {error ? <ErrorBanner error={error} onRetry={() => void load()} /> : null}
       {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label={t('close')}>×</button></div>}
-      {loading ? <Spinner label={t('loading')} /> : view === 'assigned' && tasks.length === 0 ? <div className="empty-state"><Icon name="inbox" /><p>{t('emptyAssigned')}</p></div> : <div className="matrix-grid">{quadrants.map((quadrant) => <section className={`quadrant quadrant-${quadrant.key}`} key={quadrant.key} aria-labelledby={`heading-${quadrant.key}`}><div className="quadrant-heading"><div><h2 id={`heading-${quadrant.key}`}>{t(quadrant.title)}</h2><p>{t(quadrant.hint)}</p></div><span className="task-count">{t('taskCount', { count: grouped[quadrant.key].length })}</span></div>{grouped[quadrant.key].length > 10 && <div className="limit-warning" role="status">⚠ {t('tooManyTasks')}</div>}<div className="task-list">{grouped[quadrant.key].map((task, index) => <TaskCard key={task.id} task={task} index={index} total={grouped[quadrant.key].length} canEdit={view === 'owned'} onEdit={() => setEditing(task)} onDelete={() => void remove(task)} onToggle={() => void toggle(task)} onMove={(direction) => void move(task, direction)} />)}{grouped[quadrant.key].length === 0 && <p className="empty-quadrant">{t('emptyQuadrant')}</p>}</div></section>)}</div>}
+      {loading ? <Spinner label={t('loading')} /> : view === 'assigned' && tasks.length === 0 ? <div className="empty-state"><Icon name="inbox" /><p>{t('emptyAssigned')}</p></div> : <div className="matrix-grid">{quadrants.map((quadrant) => <section className={`quadrant quadrant-${quadrant.key}`} key={quadrant.key} aria-labelledby={`heading-${quadrant.key}`}><div className="quadrant-heading"><div><h2 id={`heading-${quadrant.key}`}>{t(quadrant.title)}</h2><p>{t(quadrant.hint)}</p></div><span className="task-count">{t('taskCount', { count: grouped[quadrant.key].length })}</span></div>{shouldWarnTaskCount(grouped[quadrant.key].length) && <div className="limit-warning" role="status">⚠ {t('tooManyTasks')}</div>}<div className="task-list">{grouped[quadrant.key].map((task, index) => <TaskCard key={task.id} task={task} index={index} total={grouped[quadrant.key].length} canEdit={view === 'owned'} onEdit={() => setEditing(task)} onDelete={() => void remove(task)} onToggle={() => void toggle(task)} onMove={(direction) => void move(task, direction)} />)}{grouped[quadrant.key].length === 0 && <p className="empty-quadrant">{t('emptyQuadrant')}</p>}</div></section>)}</div>}
     </main>
     {editing !== undefined && <TaskDialog task={editing} onClose={() => setEditing(undefined)} onSave={saveTask} />}
   </div>
@@ -131,7 +132,7 @@ function AppShell() {
 function TaskCard({ task, index, total, canEdit, onEdit, onDelete, onToggle, onMove }: { task: Task; index: number; total: number; canEdit: boolean; onEdit: () => void; onDelete: () => void; onToggle: () => void; onMove: (direction: -1 | 1) => void }) {
   const { t } = useI18n()
   const overdue = task.dueDate && !task.completed && new Date(task.dueDate) < new Date()
-  return <article className={task.completed ? 'task-card completed' : 'task-card'}><div className="task-card-main"><button className="check-button" aria-label={task.completed ? t('reopen') : t('complete')} onClick={onToggle}><Icon name="check" /></button><div className="task-copy"><h3>{task.title}</h3>{task.description && <p>{task.description}</p>}<div className="task-meta">{task.dueDate && <span className={overdue ? 'due overdue' : 'due'}><Icon name="calendar" />{t('due')} {new Date(task.dueDate).toLocaleDateString()}</span>}{task.assignee?.email && <span>{t('assignedTo')}: {task.assignee.email}</span>}{task.owner?.email && <span>{t('assignedBy')}: {task.owner.email}</span>}</div></div></div><div className="task-actions">{canEdit ? <><button onClick={onEdit} aria-label={t('edit')}><Icon name="edit" /></button><button onClick={onDelete} aria-label={t('delete')}><Icon name="trash" /></button></> : <span className="readonly-note">{t('assignedReadOnly')}</span>}<button disabled={index === 0} onClick={() => onMove(-1)} aria-label={t('moveUp')}><Icon name="up" /></button><button disabled={index === total - 1} onClick={() => onMove(1)} aria-label={t('moveDown')}><Icon name="down" /></button></div></article>
+  return <article className={task.completed ? 'task-card completed' : 'task-card'}><div className="task-card-main"><button className="check-button" aria-label={task.completed ? t('reopen') : t('complete')} onClick={onToggle}><Icon name="check" /></button><div className="task-copy"><h3>{task.title}</h3>{task.description && <p>{task.description}</p>}<div className="task-meta">{task.dueDate && <span className={overdue ? 'due overdue' : 'due'}><Icon name="calendar" />{t('due')} {new Date(task.dueDate).toLocaleDateString()}</span>}{task.assignee?.email && <span>{t('assignedTo')}: {task.assignee.email}</span>}{task.owner?.email && <span>{t('assignedBy')}: {task.owner.email}</span>}</div></div></div><div className="task-actions">{canEdit ? <><button onClick={onEdit} aria-label={t('edit')}><Icon name="edit" /></button><button onClick={onDelete} aria-label={t('delete')}><Icon name="trash" /></button><button disabled={index === 0} onClick={() => onMove(-1)} aria-label={t('moveUp')}><Icon name="up" /></button><button disabled={index === total - 1} onClick={() => onMove(1)} aria-label={t('moveDown')}><Icon name="down" /></button></> : <span className="readonly-note">{t('assignedReadOnly')}</span>}</div></article>
 }
 
 function TaskDialog({ task, onClose, onSave }: { task: Task | null; onClose: () => void; onSave: (form: { title: string; description: string; quadrant: Quadrant; dueDate: string; assigneeEmail: string }) => Promise<void> }) {
