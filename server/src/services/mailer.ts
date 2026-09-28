@@ -17,7 +17,7 @@ export async function sendPasswordResetEmail(email: string, token: string): Prom
   await transporter.sendMail({
     from: config.MAIL_FROM,
     to: email,
-    subject: "Reset your Task Tracker password",
+    subject: "Reset your Focus Grid password",
     text: `Reset your password using this link: ${resetUrl.toString()}`,
     html: `<p>Reset your password using this link:</p><p><a href="${resetUrl.toString()}">Reset password</a></p>`,
   });

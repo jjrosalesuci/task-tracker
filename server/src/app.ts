@@ -17,6 +17,9 @@ app.use(helmet());
 app.use((req, res, next) => {
   const origin = req.get("origin");
   const referer = req.get("referer");
+  const allowAnyOrigin = config.NODE_ENV === "development";
+  const isAllowedOrigin = (value: string | null | undefined) =>
+    !value || allowAnyOrigin || value === config.APP_ORIGIN;
   const refererOrigin = referer ? (() => {
     try {
       return new URL(referer).origin;
@@ -25,20 +28,19 @@ app.use((req, res, next) => {
     }
   })() : null;
   const isApi = req.path.startsWith("/api/");
-  if ((origin && origin !== config.APP_ORIGIN) ||
-      (refererOrigin && refererOrigin !== config.APP_ORIGIN)) {
+  if (!isAllowedOrigin(origin) || !isAllowedOrigin(refererOrigin)) {
     if (req.method === "OPTIONS" || (isApi && !["GET", "HEAD"].includes(req.method))) {
       res.status(403).json({ error: { code: "ORIGIN_NOT_ALLOWED", message: "Origin not allowed" } });
       return;
     }
   }
-  if (origin === config.APP_ORIGIN) {
+  if (origin && isAllowedOrigin(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Vary", "Origin");
   }
   if (req.method === "OPTIONS") {
-    if (origin !== config.APP_ORIGIN) {
+    if (!origin || !isAllowedOrigin(origin)) {
       res.status(403).json({ error: { code: "ORIGIN_NOT_ALLOWED", message: "Origin not allowed" } });
       return;
     }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = "postgresql://task_tracker:task_tracker@localhost:5432/task_tracker";
+  process.env.DATABASE_URL = "postgresql://focus_grid:focus_grid@localhost:5432/focus_grid";
 }
 if (!process.env.APP_ORIGIN && process.env.APP_URL) {
   process.env.APP_ORIGIN = process.env.APP_URL;
@@ -10,7 +10,7 @@ if (!process.env.APP_ORIGIN && process.env.APP_URL) {
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.string().min(1).default("postgresql://postgres:postgres@localhost:5432/task_tracker"),
+  DATABASE_URL: z.string().min(1).default("postgresql://focus_grid:focus_grid@localhost:5432/focus_grid"),
   APP_ORIGIN: z.string().url().default("http://localhost:5173"),
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().positive().default(30),
@@ -19,7 +19,7 @@ const envSchema = z.object({
   SMTP_SECURE: z.string().transform((value) => value === "true").default(false),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  MAIL_FROM: z.string().default("Task Tracker <no-reply@example.com>"),
+  MAIL_FROM: z.string().default("Focus Grid <no-reply@example.com>"),
 });
 
 export const config = envSchema.parse(process.env);

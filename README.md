@@ -1,4 +1,4 @@
-# Dealgine
+# Focus Grid
 
 Monorepo Node.js/TypeScript con cliente y servidor. Los comandos se ejecutan
 desde la raíz:
@@ -42,7 +42,7 @@ Variables principales:
 
 ## Desarrollo local
 
-El archivo `docker-compose.dev.yml` inicia Dealgine, PostgreSQL y Mailpit:
+El archivo `docker-compose.dev.yml` inicia Focus Grid, PostgreSQL y Mailpit:
 
 ```bash
 docker compose -f docker-compose.dev.yml up --build
@@ -51,14 +51,14 @@ docker compose -f docker-compose.dev.yml up --build
 - Aplicación: <http://localhost:5173>
 - API: <http://localhost:3000/api>
 - Interfaz de Mailpit: <http://localhost:8025>
-- SMTP de Mailpit: `localhost:1025` desde el host y `mailpit:1025` desde Compose.
-- PostgreSQL: `localhost:5432` desde el host y `postgres:5432` desde Compose.
+- SMTP de Mailpit: `localhost:1025` desde el host y `host.docker.internal:1025` desde Compose.
+- PostgreSQL: `localhost:5432` desde el host y `host.docker.internal:5432` desde Compose.
 
-El código fuente se monta en `/app` y las dependencias permanecen en un volumen
+El código fuente se monta en `/app` y las dependencias permanecen en volúmenes
 Docker. Para aplicar migraciones:
 
 ```bash
-docker compose -f docker-compose.dev.yml exec task-tracker npm run db:migrate
+docker compose -f docker-compose.dev.yml exec focus-grid npm run db:migrate
 ```
 
 Para detener el entorno conservando datos:
@@ -80,10 +80,10 @@ La imagen final contiene únicamente dependencias de producción y se ejecuta co
 el usuario no privilegiado `node`.
 
 ```bash
-docker build --target production -t dealgine:latest .
+docker build --target production -t focus-grid:latest .
 docker run --rm -p 3000:3000 \
-  -e DATABASE_URL='postgresql://usuario:contrasena@host:5432/dealgine' \
-  dealgine:latest
+  -e DATABASE_URL='postgresql://user:password@host:5432/focus_grid' \
+  focus-grid:latest
 ```
 
 ## Despliegue con PostgreSQL externo
@@ -99,14 +99,14 @@ despliegue y no almacenada en el servidor, y ejecutar:
 
 ```bash
 docker compose up -d --build
-docker compose run --rm dealgine npm run db:migrate
+docker compose run --rm focus-grid npm run db:migrate
 docker compose ps
-docker compose logs -f dealgine
+docker compose logs -f focus-grid
 ```
 
-El servicio se llama `dealgine`, usa `restart: unless-stopped`, no publica el
+El servicio se llama `focus-grid`, usa `restart: unless-stopped`, no publica el
 puerto directamente y se conecta a la red externa `proxy`. Traefik enruta
-`https://dealgine.aseresoft.com` al puerto interno `3000`, mediante el
+`https://focus-grid.aseresoft.com` al puerto interno `3000`, mediante el
 entrypoint `websecure` y el resolver de certificados `letsencrypt`. Traefik debe
 estar previamente configurado con esos nombres.
 
@@ -117,17 +117,17 @@ opción es útil en instalaciones autónomas; para producción administrada se
 recomienda una base externa. Configurar en `.env`:
 
 ```dotenv
-POSTGRES_DB=dealgine
-POSTGRES_USER=dealgine
+POSTGRES_DB=focus_grid
+POSTGRES_USER=focus_grid
 POSTGRES_PASSWORD=cambiar-por-un-valor-seguro
-DATABASE_URL=postgresql://dealgine:cambiar-por-un-valor-seguro@postgres:5432/dealgine
+DATABASE_URL=postgresql://focus_grid:cambiar-por-un-valor-seguro@postgres:5432/focus_grid
 ```
 
 Después iniciar el perfil y aplicar migraciones:
 
 ```bash
 docker compose --profile local-db up -d --build
-docker compose run --rm dealgine npm run db:migrate
+docker compose run --rm focus-grid npm run db:migrate
 ```
 
 El PostgreSQL del perfil solo está disponible en la red interna `backend`; no
@@ -142,14 +142,14 @@ Comandos habituales:
 docker compose ps
 
 # Registros recientes
-docker compose logs --tail=200 dealgine
+docker compose logs --tail=200 focus-grid
 
 # Reiniciar únicamente la aplicación
-docker compose restart dealgine
+docker compose restart focus-grid
 
 # Actualizar y recrear el servicio
-docker compose build --pull dealgine
-docker compose up -d --no-deps dealgine
+docker compose build --pull focus-grid
+docker compose up -d --no-deps focus-grid
 
 # Detener el despliegue sin borrar datos
 docker compose down
@@ -157,6 +157,6 @@ docker compose down
 
 Antes de actualizar, realizar una copia de seguridad de PostgreSQL. Tras
 desplegar una nueva imagen, ejecutar `npm run db:migrate` una sola vez y
-comprobar que el healthcheck de `dealgine` figure como `healthy`. Los
+comprobar que el healthcheck de `focus-grid` figure como `healthy`. Los
 healthchecks verifican que la aplicación acepte conexiones en el puerto `3000`,
 que PostgreSQL responda y que Mailpit esté preparado.

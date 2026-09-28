@@ -1,6 +1,6 @@
 export const translations = {
   es: {
-    appName: 'FocusGrid',
+    appName: 'Focus Grid',
     tagline: 'Decide qué merece tu atención.',
     login: 'Iniciar sesión',
     register: 'Crear cuenta',
@@ -82,7 +82,7 @@ export const translations = {
     assignedReadOnly: 'Solo el propietario puede editar los detalles.',
   },
   en: {
-    appName: 'FocusGrid',
+    appName: 'Focus Grid',
     tagline: 'Decide what deserves your attention.',
     login: 'Sign in',
     register: 'Create account',

@@ -3,7 +3,7 @@ import { config } from "./config";
 import { prisma } from "./lib/prisma";
 
 const server = app.listen(config.PORT, () => {
-  console.log(`Task Tracker API listening on port ${config.PORT}`);
+  console.log(`Focus Grid API listening on port ${config.PORT}`);
 });
 
 async function shutdown(): Promise<void> {

@@ -4,7 +4,7 @@ import { HttpError } from "../lib/http-error";
 import { prisma } from "../lib/prisma";
 import { hashToken } from "../lib/tokens";
 
-export const SESSION_COOKIE = "task_tracker_session";
+export const SESSION_COOKIE = "focus_grid_session";
 
 export const sessionCookieOptions = {
   httpOnly: true,

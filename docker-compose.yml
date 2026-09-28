@@ -1,16 +1,18 @@
+name: focus-grid
+
 services:
-  dealgine:
+  focus-grid:
     build:
       context: .
       target: production
-    image: dealgine:latest
-    container_name: dealgine
+    image: focus-grid:latest
+    container_name: focus-grid
     restart: unless-stopped
     environment:
       NODE_ENV: production
       PORT: "3000"
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL en el archivo .env}
-      APP_ORIGIN: ${APP_ORIGIN:-https://dealgine.aseresoft.com}
+      APP_ORIGIN: ${APP_ORIGIN:-https://focus-grid.aseresoft.com}
       SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
       PASSWORD_RESET_TTL_MINUTES: ${PASSWORD_RESET_TTL_MINUTES:-30}
       SMTP_HOST: ${SMTP_HOST:?Define SMTP_HOST en el archivo .env}
@@ -18,7 +20,7 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
-      MAIL_FROM: ${MAIL_FROM:-Dealgine <no-reply@dealgine.aseresoft.com>}
+      MAIL_FROM: ${MAIL_FROM:-Focus Grid <no-reply@focus-grid.aseresoft.com>}
     expose:
       - "3000"
     healthcheck:
@@ -37,11 +39,11 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
-      - "traefik.http.routers.dealgine.rule=Host(`dealgine.aseresoft.com`)"
-      - "traefik.http.routers.dealgine.entrypoints=websecure"
-      - "traefik.http.routers.dealgine.tls=true"
-      - "traefik.http.routers.dealgine.tls.certresolver=letsencrypt"
-      - "traefik.http.services.dealgine.loadbalancer.server.port=3000"
+      - "traefik.http.routers.focus-grid.rule=Host(`focus-grid.aseresoft.com`)"
+      - "traefik.http.routers.focus-grid.entrypoints=websecure"
+      - "traefik.http.routers.focus-grid.tls=true"
+      - "traefik.http.routers.focus-grid.tls.certresolver=letsencrypt"
+      - "traefik.http.services.focus-grid.loadbalancer.server.port=3000"
 
   postgres:
     image: postgres:16-alpine
@@ -49,8 +51,8 @@ services:
     profiles:
       - local-db
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-dealgine}
-      POSTGRES_USER: ${POSTGRES_USER:-dealgine}
+      POSTGRES_DB: ${POSTGRES_DB:-focus_grid}
+      POSTGRES_USER: ${POSTGRES_USER:-focus_grid}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
     volumes:
       - postgres_data:/var/lib/postgresql/data
