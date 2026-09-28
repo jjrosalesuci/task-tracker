@@ -86,56 +86,124 @@ docker run --rm -p 3000:3000 \
   focus-grid:latest
 ```
 
-## Despliegue con PostgreSQL externo
+## Despliegue
 
-La red externa de Traefik debe existir antes del primer despliegue:
+El Compose de producción levanta únicamente `focus-grid`. PostgreSQL y SMTP son
+servicios externos y deben estar accesibles desde el servidor. Traefik debe
+estar ejecutándose y conectado a una red Docker externa llamada `proxy`.
+
+### Primer despliegue
+
+1. Preparar el servidor:
+
+   - Instalar Git, Docker Engine 24 o posterior y Docker Compose v2.
+   - Apuntar el DNS de `focus-grid.aseresoft.com` al servidor.
+   - Configurar Traefik con el entrypoint `websecure` y el resolver de
+     certificados `letsencrypt`.
+   - Crear la base de datos y el usuario en el PostgreSQL externo, permitir
+     conexiones desde el servidor de la aplicación y conservar su URL de
+     conexión.
+   - Disponer de las credenciales del servidor SMTP.
+
+2. Clonar el repositorio:
+
+```bash
+git clone https://github.com/jjrosalesuci/task-tracker.git focus-grid
+cd focus-grid
+```
+
+3. Crear `.env` con permisos restringidos:
+
+```bash
+install -m 600 /dev/null .env
+nano .env
+```
+
+Definir como mínimo:
+
+```dotenv
+DATABASE_URL=postgresql://USUARIO:CONTRASENA@HOST:5432/focus_grid
+APP_ORIGIN=https://focus-grid.aseresoft.com
+SESSION_TTL_DAYS=30
+PASSWORD_RESET_TTL_MINUTES=30
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=usuario-smtp
+SMTP_PASS=contrasena-smtp
+MAIL_FROM=Focus Grid <no-reply@focus-grid.aseresoft.com>
+```
+
+`DATABASE_URL` siempre debe apuntar al PostgreSQL externo. Si el usuario o la
+contraseña contienen caracteres reservados de una URL, deben codificarse.
+No versionar `.env`.
+
+4. Crear una sola vez la red externa usada por Traefik y comprobar que Traefik
+   también esté conectado a ella:
 
 ```bash
 docker network create proxy
+docker network inspect proxy
 ```
 
-Definir en `.env` una `DATABASE_URL` válida, idealmente inyectada durante el
-despliegue y no almacenada en el servidor, y ejecutar:
+Si la red ya existe, no es necesario volver a crearla.
+
+5. Validar la configuración y construir la imagen:
 
 ```bash
-docker compose up -d --build
+docker compose config --quiet
+docker compose build --pull focus-grid
+```
+
+6. Aplicar las migraciones al PostgreSQL externo:
+
+```bash
 docker compose run --rm focus-grid npm run db:migrate
+```
+
+7. Iniciar la aplicación:
+
+```bash
+docker compose up -d --no-deps focus-grid
+```
+
+8. Verificar el contenedor, los registros y el endpoint público:
+
+```bash
 docker compose ps
-docker compose logs -f focus-grid
+docker compose logs --tail=200 focus-grid
+curl --fail --silent --show-error https://focus-grid.aseresoft.com/health/ready
 ```
 
 El servicio se llama `focus-grid`, usa `restart: unless-stopped`, no publica el
 puerto directamente y se conecta a la red externa `proxy`. Traefik enruta
 `https://focus-grid.aseresoft.com` al puerto interno `3000`, mediante el
 entrypoint `websecure` y el resolver de certificados `letsencrypt`. Traefik debe
-estar previamente configurado con esos nombres.
-
-## Despliegue con PostgreSQL local opcional
-
-El Compose de producción incluye PostgreSQL bajo el perfil `local-db`. Esta
-opción es útil en instalaciones autónomas; para producción administrada se
-recomienda una base externa. Configurar en `.env`:
-
-```dotenv
-POSTGRES_DB=focus_grid
-POSTGRES_USER=focus_grid
-POSTGRES_PASSWORD=cambiar-por-un-valor-seguro
-DATABASE_URL=postgresql://focus_grid:cambiar-por-un-valor-seguro@postgres:5432/focus_grid
-```
-
-Después iniciar el perfil y aplicar migraciones:
-
-```bash
-docker compose --profile local-db up -d --build
-docker compose run --rm focus-grid npm run db:migrate
-```
-
-El PostgreSQL del perfil solo está disponible en la red interna `backend`; no
-publica el puerto `5432`.
+estar previamente configurado con esos nombres. El Compose de producción no
+incluye PostgreSQL: `DATABASE_URL` siempre debe apuntar al servidor externo.
 
 ## Operación
 
-Comandos habituales:
+### Actualizar una instalación
+
+Antes de actualizar, realizar una copia de seguridad del PostgreSQL externo.
+Después, desde el directorio del repositorio:
+
+```bash
+git pull --ff-only
+docker compose config --quiet
+docker compose build --pull focus-grid
+docker compose run --rm focus-grid npm run db:migrate
+docker compose up -d --no-deps focus-grid
+docker compose ps
+docker compose logs --tail=200 focus-grid
+curl --fail --silent --show-error https://focus-grid.aseresoft.com/health/ready
+```
+
+Las migraciones deben ejecutarse una sola vez por despliegue, después de
+construir la imagen nueva y antes de recrear la aplicación.
+
+### Comandos habituales
 
 ```bash
 # Estado y healthchecks
@@ -155,8 +223,6 @@ docker compose up -d --no-deps focus-grid
 docker compose down
 ```
 
-Antes de actualizar, realizar una copia de seguridad de PostgreSQL. Tras
-desplegar una nueva imagen, ejecutar `npm run db:migrate` una sola vez y
-comprobar que el healthcheck de `focus-grid` figure como `healthy`. Los
-healthchecks verifican que la aplicación acepte conexiones en el puerto `3000`,
-que PostgreSQL responda y que Mailpit esté preparado.
+El healthcheck de producción verifica que la aplicación acepte conexiones en el
+puerto interno `3000`. PostgreSQL y SMTP deben supervisarse por separado en sus
+respectivos servidores.

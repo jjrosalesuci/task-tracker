@@ -35,7 +35,6 @@ services:
       start_period: 20s
     networks:
       - proxy
-      - backend
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
@@ -45,34 +44,7 @@ services:
       - "traefik.http.routers.focus-grid.tls.certresolver=letsencrypt"
       - "traefik.http.services.focus-grid.loadbalancer.server.port=3000"
 
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    profiles:
-      - local-db
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-focus_grid}
-      POSTGRES_USER: ${POSTGRES_USER:-focus_grid}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - backend
-
 networks:
   proxy:
     external: true
     name: proxy
-  backend:
-    internal: true
-
-volumes:
-  postgres_data:

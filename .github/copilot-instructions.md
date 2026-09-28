@@ -28,6 +28,8 @@ This is a TypeScript monorepo with two npm workspaces:
 
 Requests flow through the client `lib/api.ts` helper to `/api`, then through an Express router, Zod `validate` middleware, authorization helpers, and Prisma. Errors are normalized by `server/src/middleware/errors.ts` into `{ error: { code, message, details? } }`.
 
+Production connects to the dedicated external PostgreSQL server through `DATABASE_URL`; do not add a PostgreSQL service, database network, or database volume to the production Compose file. Containerized PostgreSQL is limited to `docker-compose.dev.yml` for local development.
+
 ## Repository conventions
 
 - Keep the client/API task mapping explicit. Client scopes `personal`/`professional` map to API matrices `PERSONAL`/`WORK`; client quadrant names map to the `urgent` and `important` booleans; client `completed` maps to API status `PENDING`/`COMPLETED`. Update `App.tsx` mapping functions, shared client types, Zod schemas, routes, and Prisma together when this contract changes.
