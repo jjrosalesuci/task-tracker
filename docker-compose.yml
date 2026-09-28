@@ -37,11 +37,7 @@ services:
       - proxy
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=proxy"
       - "traefik.http.routers.focus-grid.rule=Host(`focus-grid.aseresoft.com`)"
-      - "traefik.http.routers.focus-grid.entrypoints=websecure"
-      - "traefik.http.routers.focus-grid.tls=true"
-      - "traefik.http.routers.focus-grid.tls.certresolver=letsencrypt"
       - "traefik.http.services.focus-grid.loadbalancer.server.port=3000"
 
 networks:
