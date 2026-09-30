@@ -96,6 +96,8 @@ export const translations = {
     medium: 'Media',
     low: 'Baja',
     createTask: 'Crear tarea',
+    expandDescription: 'Ver descripción completa',
+    collapseDescription: 'Contraer descripción',
   },
   en: {
     appName: 'Focus Grid',
@@ -194,6 +196,8 @@ export const translations = {
     medium: 'Medium',
     low: 'Low',
     createTask: 'Create task',
+    expandDescription: 'View full description',
+    collapseDescription: 'Collapse description',
   },
 } as const
 

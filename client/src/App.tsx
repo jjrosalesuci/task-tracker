@@ -244,6 +244,7 @@ function AppShell() {
 
 function TaskCard({ task, index, total, canEdit, onEdit, onDelete, onToggle, onMove, onMoveTo, onDragStart, onDragEnd }: { task: Task; index: number; total: number; canEdit: boolean; onEdit: () => void; onDelete: () => void; onToggle: () => void; onMove: (direction: -1 | 1) => void; onMoveTo: (quadrant: Quadrant) => void; onDragStart: () => void; onDragEnd: () => void }) {
   const { t, locale } = useI18n()
+  const [expanded, setExpanded] = useState(false)
   const overdue = task.dueDate && !task.completed && dateValue(task.dueDate) < localDay()
   const priority = task.quadrant === 'urgent-important' ? 'high' : task.quadrant === 'not-urgent-not-important' ? 'low' : 'medium'
   return <article className={task.completed ? 'task-card completed' : 'task-card'} aria-label={task.title} draggable={canEdit} onDragStart={(event) => {
@@ -253,7 +254,7 @@ function TaskCard({ task, index, total, canEdit, onEdit, onDelete, onToggle, onM
     onDragStart()
   }} onDragEnd={onDragEnd}>
     <div className="task-card-main"><button className="check-button" aria-label={task.completed ? t('reopen') : t('complete')} aria-pressed={task.completed} onClick={onToggle}>{task.completed && <Icon name="check" />}</button>
-      <div className="task-copy"><h3>{task.title}</h3>{task.description && <p>{task.description}</p>}
+      <div className="task-copy"><h3>{task.title}</h3>{task.description && <p id={`description-${task.id}`} className={expanded ? 'expanded' : undefined}>{task.description}</p>}
         <div className="task-meta">
           {task.dueDate && <span className={overdue ? 'due overdue' : 'due'} title={t('dueDate')}><Icon name="calendar" /><time dateTime={dateValue(task.dueDate)}>{dateValue(task.dueDate) === localDay() ? t('today') : new Date(`${dateValue(task.dueDate)}T12:00:00`).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })}</time>{overdue && <span>{t('overdue')}</span>}</span>}
           {task.assignee?.email && <span title={`${t('assignedTo')}: ${task.assignee.email}`}><Icon name="user" />{task.assignee.name || task.assignee.email.split('@')[0]}</span>}
@@ -264,6 +265,7 @@ function TaskCard({ task, index, total, canEdit, onEdit, onDelete, onToggle, onM
         {canEdit && <button className="quick-edit" onClick={onEdit} aria-label={t('edit')}><Icon name="edit" /></button>}
         <Popover label={t('taskActions', { title: task.title })} trigger={<Icon name="more" />}>
           {task.owner?.email && <p className="owner-detail">{t('assignedBy')}: {task.owner.email}</p>}
+          {task.description && <button aria-expanded={expanded} aria-controls={`description-${task.id}`} onClick={() => setExpanded(!expanded)}><Icon name={expanded ? 'up' : 'down'} />{t(expanded ? 'collapseDescription' : 'expandDescription')}</button>}
           <button onClick={onToggle}><Icon name="check" />{task.completed ? t('reopen') : t('complete')}</button>
           {canEdit ? <>
             <button onClick={onEdit}><Icon name="edit" />{t('edit')}</button>
@@ -287,6 +289,7 @@ function TaskDialog({ task, initialQuadrant, onClose, onSave }: { task: Task | n
     const dialog = dialogRef.current!
     const opener = document.activeElement as HTMLElement | null
     dialog.showModal()
+    dialog.querySelector<HTMLInputElement>('input[name="title"]')?.focus()
     return () => { dialog.close(); opener?.focus() }
   }, [])
   async function submit(event: FormEvent<HTMLFormElement>) {
