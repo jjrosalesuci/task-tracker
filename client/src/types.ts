@@ -15,6 +15,7 @@ export interface Task {
   scope: Scope
   quadrant: Quadrant
   completed: boolean
+  completedAt?: string | null
   position: number
   dueDate?: string | null
   ownerId?: string

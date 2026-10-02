@@ -3,11 +3,12 @@ import { ErrorBanner } from './components/ErrorBanner'
 import { Icon } from './components/Icons'
 import { LanguageSwitch } from './components/LanguageSwitch'
 import { Spinner } from './components/Spinner'
+import { TaskReport } from './components/TaskReport'
 import { useAuth } from './contexts/AuthContext'
 import { useI18n } from './contexts/I18nContext'
 import { navigate, useRoute } from './hooks/useRoute'
 import { api } from './lib/api'
-import { quadrantFromFlags, shouldWarnTaskCount } from './lib/task-utils'
+import { matchesTaskSearch, quadrantFromFlags, shouldWarnTaskCount } from './lib/task-utils'
 import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from './pages/AuthPages'
 import type { Quadrant, Scope, Task, User } from './types'
 
@@ -20,7 +21,7 @@ const quadrants: { key: Quadrant; urgent: boolean; important: boolean; title: 'u
 
 function fromApi(task: any): Task {
   const quadrant = quadrantFromFlags(task.urgent, task.important)
-  return { id: task.id, title: task.title, description: task.description, scope: task.matrix === 'WORK' ? 'professional' : 'personal', quadrant, completed: task.status === 'COMPLETED', position: task.position, dueDate: task.dueDate, ownerId: task.ownerId, owner: task.owner, assignee: task.assignedTo, assigneeEmail: task.assignedTo?.email, createdAt: task.createdAt, updatedAt: task.updatedAt }
+  return { id: task.id, title: task.title, description: task.description, scope: task.matrix === 'WORK' ? 'professional' : 'personal', quadrant, completed: task.status === 'COMPLETED', completedAt: task.completedAt, position: task.position, dueDate: task.dueDate, ownerId: task.ownerId, owner: task.owner, assignee: task.assignedTo, assigneeEmail: task.assignedTo?.email, createdAt: task.createdAt, updatedAt: task.updatedAt }
 }
 
 function toApi(task: { title: string; description: string; scope: Scope; quadrant: Quadrant; dueDate: string; assignedToId?: string | null }) {
@@ -70,7 +71,7 @@ function AppShell() {
   const { user, logout } = useAuth()
   const { t } = useI18n()
   const [scope, setScope] = useState<Scope>('personal')
-  const [view, setView] = useState<'owned' | 'assigned'>('owned')
+  const [view, setView] = useState<'owned' | 'assigned' | 'report'>('owned')
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>()
@@ -82,6 +83,8 @@ function AppShell() {
   const [dragged, setDragged] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<Quadrant | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const menuRef = useRef<HTMLButtonElement>(null)
+  const navRef = useRef<HTMLElement>(null)
   const loadId = useRef(0)
   const mutationPending = useRef(false)
 
@@ -91,11 +94,26 @@ function AppShell() {
     setTasks([]); setDragged(null); setDropTarget(null)
     try {
       const matrix = scope === 'professional' ? 'WORK' : 'PERSONAL'
-      const result = await api<{ tasks: any[] }>(`/tasks?matrix=${matrix}&scope=${view}`)
+      const result = await api<{ tasks: any[] }>(view === 'report' ? '/tasks?scope=all' : `/tasks?matrix=${matrix}&scope=${view}`)
       if (id === loadId.current) setTasks(result.tasks.map(fromApi))
     } catch (caught) { if (id === loadId.current) setError(caught) } finally { if (id === loadId.current) setLoading(false) }
   }, [scope, view])
   useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    if (!mobileMenu) return
+    function dismiss(event: PointerEvent) {
+      if (!navRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setMobileMenu(false)
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key === 'Escape') { setMobileMenu(false); menuRef.current?.focus() }
+    }
+    document.addEventListener('pointerdown', dismiss)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [mobileMenu])
   useEffect(() => {
     if (!notice) return
     const timer = window.setTimeout(() => setNotice(''), 4000)
@@ -113,12 +131,13 @@ function AppShell() {
     return () => window.removeEventListener('keydown', shortcut)
   }, [editing])
 
+  const activeTasks = useMemo(() => tasks.filter((task) => !task.completed), [tasks])
   const grouped = useMemo(() => quadrants.reduce<Record<Quadrant, Task[]>>((all, q) => {
-    all[q.key] = tasks.filter((task) => task.quadrant === q.key).sort((a, b) => a.position - b.position)
+    all[q.key] = activeTasks.filter((task) => task.quadrant === q.key).sort((a, b) => a.position - b.position)
     return all
-  }, { 'urgent-important': [], 'not-urgent-important': [], 'urgent-not-important': [], 'not-urgent-not-important': [] }), [tasks])
+  }, { 'urgent-important': [], 'not-urgent-important': [], 'urgent-not-important': [], 'not-urgent-not-important': [] }), [activeTasks])
   const query = search.trim().toLocaleLowerCase()
-  const matches = (task: Task) => !query || [task.title, task.description, task.assignee?.name, task.assignee?.email].some((value) => value?.toLocaleLowerCase().includes(query))
+  const matches = (task: Task) => matchesTaskSearch(task, search)
   const dueTasks = tasks.filter((task) => !task.completed && task.dueDate && dateValue(task.dueDate) <= localDay())
 
   function createTask(quadrant: Quadrant = 'urgent-important') {
@@ -147,10 +166,12 @@ function AppShell() {
   }
 
   async function toggle(task: Task) {
+    const id = loadId.current
     try {
       const result = await api<{ task: any }>(`/tasks/${task.id}`, { method: 'PATCH', body: { status: task.completed ? 'PENDING' : 'COMPLETED' } })
+      if (id !== loadId.current) return
       setTasks((current) => current.map((item) => item.id === task.id ? fromApi(result.task) : item))
-    } catch (caught) { setError(caught) }
+    } catch (caught) { if (id === loadId.current) setError(caught) }
   }
 
   async function remove(task: Task) {
@@ -193,11 +214,12 @@ function AppShell() {
   return <div className="app-shell">
     <a className="skip-link" href="#main">{t('skipToContent')}</a>
     <header className="topbar">
-      <button className="icon-button menu-toggle" aria-label={t('menu')} onClick={() => setMobileMenu(!mobileMenu)}><Icon name="menu" /></button>
+      <button ref={menuRef} className="icon-button menu-toggle" aria-label={t('menu')} aria-expanded={mobileMenu} aria-controls="main-navigation" onClick={() => setMobileMenu(!mobileMenu)}><Icon name="menu" /></button>
       <div className="brand-compact"><span className="brand-dot" />{t('appName')}</div>
-      <nav className={mobileMenu ? 'topnav open' : 'topnav'}>
-        <button className={view === 'owned' ? 'nav-button active' : 'nav-button'} onClick={() => { setView('owned'); setMobileMenu(false) }}><Icon name="grid" />{t('overview')}</button>
-        <button className={view === 'assigned' ? 'nav-button active' : 'nav-button'} onClick={() => { setView('assigned'); setMobileMenu(false) }}><Icon name="inbox" />{t('assigned')}</button>
+      <nav ref={navRef} id="main-navigation" className={mobileMenu ? 'topnav open' : 'topnav'}>
+        <button className={view === 'owned' ? 'nav-button active' : 'nav-button'} aria-current={view === 'owned' ? 'page' : undefined} onClick={() => { setView('owned'); setSearch(''); setMobileMenu(false) }}><Icon name="grid" />{t('overview')}</button>
+        <button className={view === 'assigned' ? 'nav-button active' : 'nav-button'} aria-current={view === 'assigned' ? 'page' : undefined} onClick={() => { setView('assigned'); setSearch(''); setMobileMenu(false) }}><Icon name="inbox" />{t('assigned')}</button>
+        <button className={view === 'report' ? 'nav-button active' : 'nav-button'} aria-current={view === 'report' ? 'page' : undefined} onClick={() => { setView('report'); setSearch(''); setMobileMenu(false) }}><Icon name="inbox" />{t('taskReport')}</button>
       </nav>
       <div className="top-actions">
         <div className="quick-search"><Icon name="search" /><input ref={searchRef} type="search" aria-label={t('searchTasks')} placeholder={t('searchTasks')} value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') setSearch('') }} />{search ? <button className="icon-button" aria-label={t('clearSearch')} onClick={() => setSearch('')}><Icon name="close" /></button> : <kbd>⌘ K / Ctrl K</kbd>}</div>
@@ -212,12 +234,12 @@ function AppShell() {
       </div>
     </header>
     <main id="main" className="workspace">
-      <div className="workspace-heading"><div><p className="eyebrow">{view === 'assigned' ? t('assigned') : t('overview')}</p><h1>{t('welcome', { name: user?.name || user?.email.split('@')[0] || '' })}</h1></div><button className="button button-primary" onClick={() => createTask()} disabled={view === 'assigned'}><Icon name="plus" />{t('newTask')}</button></div>
-      <div className="scope-tabs" role="tablist">{(['personal', 'professional'] as Scope[]).map((item) => <button key={item} role="tab" aria-selected={scope === item} className={scope === item ? 'scope-tab active' : 'scope-tab'} onClick={() => setScope(item)}>{t(item)}</button>)}</div>
+      <div className="workspace-heading"><div><p className="eyebrow">{t(view === 'report' ? 'taskReport' : view === 'assigned' ? 'assigned' : 'overview')}</p><h1>{t('welcome', { name: user?.name || user?.email.split('@')[0] || '' })}</h1></div>{view !== 'report' && <button className="button button-primary" onClick={() => createTask()} disabled={view === 'assigned'}><Icon name="plus" />{t('newTask')}</button>}</div>
+      {view !== 'report' && <div className="scope-tabs" role="tablist">{(['personal', 'professional'] as Scope[]).map((item) => <button key={item} role="tab" aria-selected={scope === item} className={scope === item ? 'scope-tab active' : 'scope-tab'} onClick={() => setScope(item)}>{t(item)}</button>)}</div>}
       {error ? <ErrorBanner error={error} onRetry={() => void load()} /> : null}
       {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label={t('close')}>×</button></div>}
-      {!loading && query && !tasks.some(matches) && <p className="search-empty" role="status">{t('noResults')}</p>}
-      {loading ? <Spinner label={t('loading')} /> : view === 'assigned' && tasks.length === 0 ? <div className="empty-state"><Icon name="inbox" /><p>{t('emptyAssigned')}</p></div> : <div className="matrix-grid">{quadrants.map((quadrant, quadrantIndex) => {
+      {!loading && view !== 'report' && query && !activeTasks.some(matches) && <p className="search-empty" role="status">{t('noResults')}</p>}
+      {loading ? <Spinner label={t('loading')} /> : view === 'report' ? <TaskReport tasks={tasks} userId={user!.id} search={search} onClearSearch={() => setSearch('')} onToggle={toggle} quadrants={quadrants} /> : view === 'assigned' && activeTasks.length === 0 ? <div className="empty-state"><Icon name="inbox" /><p>{t('emptyAssigned')}</p></div> : <div className="matrix-grid">{quadrants.map((quadrant, quadrantIndex) => {
         const visible = grouped[quadrant.key].filter(matches)
         return <section className={`quadrant quadrant-${quadrant.key}${dropTarget === quadrant.key ? ' drop-target' : ''}`} key={quadrant.key} aria-labelledby={`heading-${quadrant.key}`}
           onDragOver={(event) => {

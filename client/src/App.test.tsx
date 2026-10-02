@@ -21,6 +21,8 @@ const firstTask = {
   assignedTo: { id: 'other', email: 'ana@example.com' }, dueDate: '2020-01-02T23:59:59.000Z',
 }
 const secondTask = { ...firstTask, id: 'second', title: 'Plan release', description: null, urgent: false, position: 4, dueDate: null }
+const completedTask = { ...firstTask, id: 'completed', title: 'Finished cleanup', status: 'COMPLETED', urgent: false, important: false, completedAt: '2026-06-15T12:00:00.000Z' }
+const assignedCompletedTask = { ...completedTask, id: 'assigned-completed', title: 'Finished work', matrix: 'WORK', important: true, ownerId: 'other', owner: { id: 'other', email: 'ana@example.com' }, assignedTo: { id: 'owner', email: 'juan@example.com' }, completedAt: '2026-06-16T12:00:00.000Z' }
 const request = vi.mocked(api)
 
 beforeAll(() => {
@@ -42,6 +44,76 @@ async function renderApp() {
 }
 
 describe('compact task workspace', () => {
+  it('excludes completed tasks from every quadrant, counts, search and notifications', async () => {
+    const completed = [
+      { ...completedTask, id: 'done-now', urgent: true, important: true },
+      { ...completedTask, id: 'done-schedule', important: true },
+      { ...completedTask, id: 'done-delegate', urgent: true },
+      completedTask,
+    ]
+    request.mockResolvedValueOnce({ tasks: [firstTask, ...completed] })
+    const user = await renderApp()
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+    expect(within(screen.getByRole('region', { name: 'Eliminate' })).getByLabelText('0 tasks')).toBeInTheDocument()
+    await user.click(screen.getByLabelText('Notifications'))
+    expect(screen.queryByRole('button', { name: /Finished cleanup/ })).not.toBeInTheDocument()
+    await user.type(screen.getByRole('searchbox'), completedTask.title)
+    expect(screen.getByRole('status')).toHaveTextContent('No tasks match your search.')
+  })
+
+  it('moves a completed task out of Eliminate into the report and reopens in its original quadrant', async () => {
+    let saved = { ...firstTask, urgent: false, important: false, completedAt: null as string | null }
+    request.mockImplementation(async (_path, options) => {
+      if (options?.method === 'PATCH') {
+        const status = (options.body as { status: string }).status
+        saved = { ...saved, status, completedAt: status === 'COMPLETED' ? '2026-06-15T12:00:00.000Z' : null }
+        return { task: saved }
+      }
+      return { tasks: [saved] }
+    })
+    const user = await renderApp()
+    await user.click(within(screen.getByRole('article')).getByRole('button', { name: 'Complete' }))
+    await waitFor(() => expect(screen.queryByRole('article')).not.toBeInTheDocument())
+    expect(within(screen.getByRole('region', { name: 'Eliminate' })).getByLabelText('0 tasks')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Task report' }))
+    expect(await screen.findByRole('heading', { name: firstTask.title })).toBeInTheDocument()
+    expect(request).toHaveBeenLastCalledWith('/tasks?scope=all')
+    expect(screen.queryByRole('article')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
+    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('completed')
+    await user.click(screen.getByRole('button', { name: 'Reopen' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('0 matching tasks'))
+    expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { status: 'PENDING' } })
+    await user.click(screen.getByRole('button', { name: 'Matrix' }))
+    expect(await within(screen.getByRole('region', { name: 'Eliminate' })).findByRole('article', { name: firstTask.title })).toBeInTheDocument()
+  })
+
+  it('keeps a task visible when completion fails', async () => {
+    const user = await renderApp()
+    request.mockRejectedValueOnce(new Error('Offline'))
+    await user.click(within(screen.getByRole('article', { name: firstTask.title })).getByRole('button', { name: 'Complete' }))
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(screen.getByRole('article', { name: firstTask.title })).toBeInTheDocument()
+  })
+
+  it('closes the mobile navigation with Escape, outside interaction or a selection', async () => {
+    const user = await renderApp()
+    const menu = screen.getByRole('button', { name: 'Menu' })
+    expect(menu).toHaveAttribute('aria-expanded', 'false')
+    await user.click(menu)
+    expect(menu).toHaveAttribute('aria-expanded', 'true')
+    await user.keyboard('{Escape}')
+    expect(menu).toHaveAttribute('aria-expanded', 'false')
+    expect(menu).toHaveFocus()
+    await user.click(menu)
+    await user.click(screen.getByRole('heading', { name: 'Hello, Juan' }))
+    expect(menu).toHaveAttribute('aria-expanded', 'false')
+    await user.click(menu)
+    await user.click(screen.getByRole('button', { name: 'Task report' }))
+    expect(menu).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: 'Task report' })).toHaveAttribute('aria-current', 'page')
+  })
+
   it('shows compact metadata, explicit priority and an unchecked pending task', async () => {
     await renderApp()
     const card = within(screen.getByRole('article', { name: firstTask.title }))
@@ -51,6 +123,91 @@ describe('compact task workspace', () => {
     expect(card.getByRole('button', { name: 'Complete' }).querySelector('svg')).toBeNull()
     expect(card.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Do now' })).toHaveTextContent('1')
+  })
+
+  describe('task report', () => {
+    async function openReport(tasks = [firstTask, completedTask, assignedCompletedTask]) {
+      const user = await renderApp()
+      request.mockResolvedValueOnce({ tasks })
+      await user.click(screen.getByRole('button', { name: 'Task report' }))
+      await screen.findByRole('heading', { name: completedTask.title })
+      return user
+    }
+
+    it('defaults to completed tasks across both matrices, sorts newest first and shows completion dates', async () => {
+      await openReport()
+      const rows = screen.getAllByRole('listitem')
+      expect(rows).toHaveLength(2)
+      expect(rows[0]).toHaveTextContent(assignedCompletedTask.title)
+      expect(rows[1]).toHaveTextContent(completedTask.title)
+      expect(rows[1].querySelector(`time[datetime="${completedTask.completedAt}"]`)).not.toBeNull()
+      expect(screen.queryByRole('heading', { name: firstTask.title })).not.toBeInTheDocument()
+      expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'New task' })).not.toBeInTheDocument()
+    })
+
+    it('combines matrix, relationship, quadrant and search filters and resets them', async () => {
+      const user = await openReport()
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Matrix' }), 'professional')
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Relationship' }), 'assigned')
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Quadrant' }), 'not-urgent-important')
+      await user.type(screen.getByRole('searchbox'), 'finished WORK')
+      expect(screen.getAllByRole('listitem')).toHaveLength(1)
+      expect(screen.getByRole('listitem')).toHaveTextContent(assignedCompletedTask.title)
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Relationship' }), 'owned')
+      expect(screen.getByText('No tasks match the filters.')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Reset filters' }))
+      expect(screen.getByRole('searchbox')).toHaveValue('')
+      expect(screen.getAllByRole('listitem')).toHaveLength(2)
+      expect(request).toHaveBeenCalledTimes(2)
+    })
+
+    it('filters pending and all statuses, and searches owner email', async () => {
+      const user = await openReport()
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'pending')
+      expect(screen.getByRole('listitem')).toHaveTextContent(firstTask.title)
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Status' }), 'all')
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
+      await user.type(screen.getByRole('searchbox'), 'juan@example.com')
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
+    })
+
+    it('uses inclusive completion dates, excludes missing dates and validates inverted ranges', async () => {
+      const withoutDate = { ...completedTask, id: 'legacy', title: 'Legacy completion', completedAt: null }
+      await openReport([completedTask, assignedCompletedTask, withoutDate])
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
+      fireEvent.change(screen.getByLabelText('Completed from'), { target: { value: '2026-06-15' } })
+      fireEvent.change(screen.getByLabelText('Completed through'), { target: { value: '2026-06-15' } })
+      expect(screen.getAllByRole('listitem')).toHaveLength(1)
+      expect(screen.getByRole('listitem')).toHaveTextContent(completedTask.title)
+      fireEvent.change(screen.getByLabelText('Completed from'), { target: { value: '2026-06-16' } })
+      expect(screen.getByRole('alert')).toHaveTextContent('The start date cannot be after the end date.')
+      expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Completed from')).toHaveAttribute('aria-invalid', 'true')
+    })
+
+    it('allows assignees to reopen without exposing owner-only actions and retains failed updates', async () => {
+      const user = await openReport()
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Relationship' }), 'assigned')
+      expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+      request.mockRejectedValueOnce(new Error('Offline'))
+      await user.click(screen.getByRole('button', { name: 'Reopen' }))
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      expect(screen.getByRole('listitem')).toHaveTextContent(assignedCompletedTask.title)
+      expect(screen.getByRole('button', { name: 'Reopen' })).toBeEnabled()
+      expect(request).toHaveBeenLastCalledWith('/tasks/assigned-completed', { method: 'PATCH', body: { status: 'PENDING' } })
+    })
+
+    it('localizes report labels and filters in Spanish', async () => {
+      localStorage.setItem('locale', 'es')
+      const user = await renderApp()
+      request.mockResolvedValueOnce({ tasks: [completedTask] })
+      await user.click(screen.getByRole('button', { name: 'Reporte de tareas' }))
+      expect(await screen.findByRole('combobox', { name: 'Estado' })).toHaveValue('completed')
+      expect(screen.getByRole('button', { name: 'Reabrir' })).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('1 tareas encontradas')
+    })
   })
 
   it('focuses search with either shortcut, filters and clears without changing tasks', async () => {
