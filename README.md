@@ -10,6 +10,17 @@ desde la raíz:
 
 La aplicación escucha en el puerto `3000`.
 
+## Reporte de tareas
+
+Las tareas completadas dejan de aparecer en todos los cuadrantes de la matriz.
+El menú **Reporte de tareas** permite consultar tareas propias y asignadas de
+las matrices personal y profesional; inicialmente muestra las completadas.
+Se pueden combinar filtros de texto, estado, matriz, relación y cuadrante,
+además de un intervalo inclusivo de fechas de finalización según la zona horaria
+local del navegador. Restablecer los filtros recupera la vista inicial y borra
+la búsqueda. Al reabrir una tarea completada, vuelve como pendiente a su matriz
+y cuadrante originales.
+
 ## Requisitos
 
 - Docker Engine 24 o posterior.
@@ -183,6 +194,49 @@ estar previamente configurado con esos nombres. El Compose de producción no
 incluye PostgreSQL: `DATABASE_URL` siempre debe apuntar al servidor externo.
 
 ## Operación
+
+### Instalar Focus Grid como aplicación (PWA)
+
+La instalación requiere HTTPS (o `localhost` para pruebas). El manifiesto y los
+iconos permiten abrir Focus Grid en una ventana independiente; la disponibilidad
+y el nombre de las opciones de instalación dependen del navegador.
+
+- **Android, Chrome/Edge:** abrir Focus Grid, usar el menú del navegador y elegir
+  «Instalar aplicación» o «Añadir a pantalla de inicio».
+- **iPhone/iPad, Safari:** abrir Focus Grid, pulsar Compartir y seleccionar
+  «Añadir a pantalla de inicio»; activar «Abrir como app web» si aparece.
+- **Escritorio, Chrome/Edge:** usar el icono de instalación de la barra de
+  direcciones o la opción de instalación del menú.
+
+La aplicación necesita conexión para iniciar sesión y consultar o modificar
+tareas. Sin conexión, una navegación normal muestra únicamente una página
+estática en español e inglés; **no hay tareas offline, cola de cambios ni
+sincronización en segundo plano**. El service worker guarda solo esa página y
+los iconos públicos. No guarda HTML de la aplicación, respuestas API, sesiones
+ni datos de tareas. Las rutas de autenticación, `/api`, `/health` y las URL con
+parámetros (incluidos los tokens de recuperación) no se interceptan. La pantalla
+ya abierta no se sustituye automáticamente cuando se pierde la conexión.
+
+El service worker se registra únicamente en compilaciones de producción. Para
+probar el manifiesto y la página offline sin API:
+
+```bash
+npm run build --workspace client
+npm exec --workspace client -- vite preview --host 127.0.0.1 --port 4173
+```
+
+Abrir `http://localhost:4173` con conexión. En las herramientas del navegador,
+comprobar **Application → Manifest / Service Workers**, esperar la activación
+del worker y volver a cargar la página. Activar **Network → Offline** y navegar
+a `/` para comprobar la página bilingüe. **Cache Storage** debe contener solo
+`/offline.html` y los tres PNG públicos, incluso después de usar la aplicación.
+Desactivar Offline antes de volver a intentar. Para probar acceso, sesiones y
+tareas, usar el despliegue de producción completo con su API y base de datos.
+
+Las actualizaciones esperan a que se cierren las ventanas y pestañas controladas;
+no fuerzan recargas ni interrumpen tareas en curso. Al activarse, eliminan solo
+cachés antiguas con el prefijo `focus-grid-public-`. Al cambiar los recursos
+offline, incrementar la versión de caché en `client/public/sw.js`.
 
 ### Actualizar una instalación
 
