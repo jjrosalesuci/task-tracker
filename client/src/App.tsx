@@ -64,6 +64,7 @@ function AppShell() {
   const [scope, setScope] = useState<Scope>('personal')
   const [view, setView] = useState<TaskView>('owned')
   const [tasks, setTasks] = useState<Task[]>([])
+  const [today, setToday] = useState(localDay)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>()
   const [editing, setEditing] = useState<Task | null | undefined>(undefined)
@@ -123,6 +124,30 @@ function AppShell() {
     return () => { ++requests.current }
   }, [load])
   useEffect(() => {
+    let timer: number
+    function scheduleRefresh() {
+      const now = new Date()
+      const midnight = new Date(now)
+      midnight.setHours(24, 0, 0, 0)
+      timer = window.setTimeout(refresh, midnight.getTime() - now.getTime())
+    }
+    function refresh() {
+      setToday(localDay())
+      window.clearTimeout(timer)
+      scheduleRefresh()
+    }
+    scheduleRefresh()
+    window.addEventListener('focus', refresh)
+    window.addEventListener('pageshow', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('focus', refresh)
+      window.removeEventListener('pageshow', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [])
+  useEffect(() => {
     if (!mobileMenu) return
     function dismiss(event: PointerEvent) {
       if (!navRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setMobileMenu(false)
@@ -178,16 +203,16 @@ function AppShell() {
   }, [editing, sheetId, view])
 
   const activeTasks = useMemo(() => tasks.filter((task) => !task.completed), [tasks])
-  const viewTasks = useMemo(() => tasks.filter((task) => matchesTaskView(task, view)), [tasks, view])
+  const viewTasks = useMemo(() => tasks.filter((task) => matchesTaskView(task, view, today)), [tasks, today, view])
   const grouped = useMemo(() => quadrants.reduce<Record<Quadrant, Task[]>>((all, q) => {
     all[q.key] = viewTasks.filter((task) => task.quadrant === q.key).sort(compareTaskDates)
     return all
   }, { 'urgent-important': [], 'not-urgent-important': [], 'urgent-not-important': [], 'not-urgent-not-important': [] }), [viewTasks])
   const query = search.trim().toLocaleLowerCase()
   const matches = (task: Task) => matchesTaskSearch(task, search)
-  const dueTasks = viewTasks.filter((task) => !task.completed && task.dueDate && dateValue(task.dueDate) <= localDay())
-  const urgentCount = activeTasks.filter((task) => matchesTaskView(task, 'today')).length
-  const scheduleDue = activeTasks.filter((task) => task.quadrant === 'not-urgent-important' && task.dueDate && dateValue(task.dueDate) <= localDay())
+  const dueTasks = viewTasks.filter((task) => !task.completed && task.dueDate && dateValue(task.dueDate) <= today)
+  const urgentCount = activeTasks.filter((task) => matchesTaskView(task, 'today', today)).length
+  const scheduleDue = activeTasks.filter((task) => task.quadrant === 'not-urgent-important' && task.dueDate && dateValue(task.dueDate) <= today)
   const selected = viewTasks.find((task) => task.id === selectedId)
   const sheet = viewTasks.find((task) => task.id === sheetId)
   const canOwn = (task: Task) => task.ownerId === user?.id
@@ -207,8 +232,10 @@ function AppShell() {
   }
 
   async function saveTask(form: { title: string; description: string; quadrant: Quadrant; dueDate: string; assigneeEmail: string }) {
-      const id = loadId.current
-      if (editing && !canOwn(editing)) return
+    const id = loadId.current
+    const editingTaskId = editing?.id
+    if (editing && (!canOwn(editing) || !startMutation([editing.id]))) return
+    try {
       let assignedToId: string | null = null
       if (form.assigneeEmail.trim()) {
         const found = await api<{ user: User | null }>(`/users/search?email=${encodeURIComponent(form.assigneeEmail.trim())}`)
@@ -229,6 +256,9 @@ function AppShell() {
         setNotice(t('taskSaved'))
       }
       setEditing(undefined)
+    } finally {
+      if (editingTaskId) finishMutation([editingTaskId])
+    }
   }
 
   async function toggle(task: Task) {
@@ -255,7 +285,7 @@ function AppShell() {
   }
 
   async function move(task: Task, direction: -1 | 1) {
-    if (!canOwn(task)) return
+    if (!canOwn(task) || view === 'assigned') return
     const list = grouped[task.quadrant], index = list.findIndex((item) => item.id === task.id), next = index + direction
     if (index < 0 || next < 0 || next >= list.length || dateValue(task.dueDate) !== dateValue(list[next].dueDate)) return
     const reordered = [...list]; [reordered[index], reordered[next]] = [reordered[next], reordered[index]]
@@ -314,7 +344,7 @@ function AppShell() {
   function detailContent(task: Task) {
     const list = grouped[task.quadrant]
     const index = list.indexOf(task)
-    const canReorder = (neighbor: Task | undefined) => !!neighbor && dateValue(neighbor.dueDate) === dateValue(task.dueDate) && !list.some((item) => pendingTaskIds.has(item.id))
+    const canReorder = (neighbor: Task | undefined) => view !== 'assigned' && !!neighbor && dateValue(neighbor.dueDate) === dateValue(task.dueDate) && !list.some((item) => pendingTaskIds.has(item.id))
     return <TaskDetails task={task} pending={pendingTaskIds.has(task.id)} canEdit={canOwn(task)} onToggle={() => void toggle(task)} onMoveTo={(quadrant) => void moveTo(task, quadrant)} onPostpone={(day) => void patchDetails(task, { dueDate: day ? `${day}T23:59:59.000Z` : null }, 'taskUpdated')} onEdit={() => { setSheetId(null); setEditing(task) }} onDelete={() => void remove(task)} onMove={(direction) => void move(task, direction)} canMoveUp={canReorder(list[index - 1])} canMoveDown={canReorder(list[index + 1])} />
   }
 
@@ -342,7 +372,7 @@ function AppShell() {
         {([
           ['owned', 'overview', 'grid'], ['today', 'today', 'bolt'], ['week', 'nextSevenDays', 'calendar'],
           ['completed', 'completed', 'check'], ['assigned', 'assigned', 'user'], ['report', 'taskReport', 'inbox'],
-        ] as const).map(([key, label, icon]) => <button key={key} className={`nav-button${view === key ? ' active' : ''}`} aria-current={view === key ? 'page' : undefined} onClick={() => changeContext(scope, key)}><Icon name={icon} />{t(label)}{key === 'today' && <span className="nav-count" aria-label={t('taskCount', { count: urgentCount })}>{urgentCount}</span>}</button>)}
+        ] as const).map(([key, label, icon]) => <button key={key} className={`nav-button${view === key ? ' active' : ''}`} aria-current={view === key ? 'page' : undefined} onClick={() => changeContext(scope, key)}><Icon name={icon} />{t(label)}{key === 'today' && view !== 'assigned' && view !== 'report' && <span className="nav-count" aria-label={t('taskCount', { count: urgentCount })}>{urgentCount}</span>}</button>)}
       </nav>
       <div className="sidebar-spaces"><p className="eyebrow">{t('spaces')}</p>{(['personal', 'professional'] as Scope[]).map((item) => <button key={item} className={`nav-button${scope === item ? ' active' : ''}`} aria-pressed={scope === item} onClick={() => changeContext(item, view === 'report' ? 'owned' : view)}><Icon name={item === 'personal' ? 'user' : 'inbox'} />{t(item)}</button>)}</div>
       <div className="sidebar-account"><span className="avatar">{(user?.name || user?.email || '').slice(0, 2).toUpperCase()}</span><span>{user?.name}</span><Popover label={t('settings')} trigger={<Icon name="settings" />} className="user-menu"><strong>{user?.name}</strong><p>{user?.email}</p><LanguageSwitch /><button onClick={() => void logout()}><Icon name="logout" />{t('logout')}</button></Popover></div>
