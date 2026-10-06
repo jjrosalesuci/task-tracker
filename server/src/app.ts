@@ -13,7 +13,14 @@ import { usersRouter } from "./routes/users";
 export const app = express();
 
 app.disable("x-powered-by");
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      scriptSrc: ["'self'", "https://static.cloudflareinsights.com"],
+      connectSrc: ["'self'", "https://cloudflareinsights.com"],
+    },
+  },
+}));
 app.use((req, res, next) => {
   const origin = req.get("origin");
   const referer = req.get("referer");
