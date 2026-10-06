@@ -75,6 +75,7 @@ function AppShell() {
   const [sheetId, setSheetId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Partial<Record<Quadrant, boolean>>>({})
   const [bulkMoving, setBulkMoving] = useState(false)
+  const [pendingTaskIds, setPendingTaskIds] = useState<Set<string>>(() => new Set())
   const [desktop, setDesktop] = useState(() => window.matchMedia?.('(min-width: 1100px)').matches ?? false)
   const [newQuadrant, setNewQuadrant] = useState<Quadrant>('urgent-important')
   const [dragged, setDragged] = useState<string | null>(null)
@@ -83,8 +84,19 @@ function AppShell() {
   const menuRef = useRef<HTMLButtonElement>(null)
   const navRef = useRef<HTMLElement>(null)
   const loadId = useRef(0)
-  const mutationPending = useRef(false)
   const pendingTasks = useRef(new Set<string>())
+
+  function startMutation(ids: string[]) {
+    if (ids.some((id) => pendingTasks.current.has(id))) return false
+    ids.forEach((id) => pendingTasks.current.add(id))
+    setPendingTaskIds(new Set(pendingTasks.current))
+    return true
+  }
+
+  function finishMutation(ids: string[]) {
+    ids.forEach((id) => pendingTasks.current.delete(id))
+    setPendingTaskIds(new Set(pendingTasks.current))
+  }
 
   function changeContext(nextScope: Scope, nextView: TaskView) {
     if (nextScope !== scope || nextView !== view) {
@@ -220,48 +232,47 @@ function AppShell() {
   }
 
   async function toggle(task: Task) {
-    if (pendingTasks.current.has(task.id)) return
-    pendingTasks.current.add(task.id)
+    if (!startMutation([task.id])) return
     const id = loadId.current
     try {
       const result = await api<{ task: any }>(`/tasks/${task.id}`, { method: 'PATCH', body: { status: task.completed ? 'PENDING' : 'COMPLETED' } })
       if (id !== loadId.current) return
       applyTaskUpdate(fromApi(result.task))
-    } catch (caught) { if (id === loadId.current) setError(caught) } finally { pendingTasks.current.delete(task.id) }
+    } catch (caught) { if (id === loadId.current) setError(caught) } finally { finishMutation([task.id]) }
   }
 
   async function remove(task: Task) {
     if (!canOwn(task) || pendingTasks.current.has(task.id)) return
     if (!window.confirm(t('deleteConfirm'))) return
+    if (!startMutation([task.id])) return
     const id = loadId.current
-    pendingTasks.current.add(task.id)
     try {
       await api(`/tasks/${task.id}`, { method: 'DELETE' })
       if (id !== loadId.current) return
       setTasks((current) => current.filter((item) => item.id !== task.id)); setNotice(t('taskDeleted'))
       setSelectedId(null); setSheetId(null)
-    } catch (caught) { if (id === loadId.current) setError(caught) } finally { pendingTasks.current.delete(task.id) }
+    } catch (caught) { if (id === loadId.current) setError(caught) } finally { finishMutation([task.id]) }
   }
 
   async function move(task: Task, direction: -1 | 1) {
-    if (!canOwn(task) || mutationPending.current || pendingTasks.current.has(task.id)) return
+    if (!canOwn(task)) return
     const list = grouped[task.quadrant], index = list.findIndex((item) => item.id === task.id), next = index + direction
     if (index < 0 || next < 0 || next >= list.length || dateValue(task.dueDate) !== dateValue(list[next].dueDate)) return
     const reordered = [...list]; [reordered[index], reordered[next]] = [reordered[next], reordered[index]]
-    mutationPending.current = true
+    const ids = reordered.map((item) => item.id)
+    if (!startMutation(ids)) return
     const id = loadId.current
     try {
       await api('/tasks/reorder/batch', { method: 'POST', body: { items: reordered.map((item, position) => ({ id: item.id, position })) } })
       if (id !== loadId.current) return
       setTasks((current) => current.map((item) => { const position = reordered.findIndex((nextItem) => nextItem.id === item.id); return position < 0 ? item : { ...item, position } }))
       setNotice(t('taskMoved'))
-    } catch (caught) { if (id === loadId.current) setError(caught) } finally { mutationPending.current = false }
+    } catch (caught) { if (id === loadId.current) setError(caught) } finally { finishMutation(ids) }
   }
 
   async function patchDetails(task: Task, body: Record<string, unknown>, noticeKey: 'taskMoved' | 'taskUpdated') {
-    if (!canOwn(task) || pendingTasks.current.has(task.id)) return
+    if (!canOwn(task) || !startMutation([task.id])) return
     const id = loadId.current
-    pendingTasks.current.add(task.id)
     try {
       const result = await api<{ task: any }>(`/tasks/${task.id}`, { method: 'PATCH', body })
       if (id !== loadId.current) return
@@ -270,7 +281,7 @@ function AppShell() {
       if (typeof body.urgent === 'boolean' && typeof body.important === 'boolean') {
         setCollapsed((current) => ({ ...current, [quadrantFromFlags(body.urgent as boolean, body.important as boolean)]: false }))
       }
-    } catch (caught) { if (id === loadId.current) setError(caught) } finally { pendingTasks.current.delete(task.id) }
+    } catch (caught) { if (id === loadId.current) setError(caught) } finally { finishMutation([task.id]) }
   }
 
   async function moveTo(task: Task, quadrant: Quadrant, position?: number) {
@@ -303,8 +314,8 @@ function AppShell() {
   function detailContent(task: Task) {
     const list = grouped[task.quadrant]
     const index = list.indexOf(task)
-    const canReorder = (neighbor: Task | undefined) => !!neighbor && dateValue(neighbor.dueDate) === dateValue(task.dueDate)
-    return <TaskDetails task={task} canEdit={canOwn(task)} onToggle={() => void toggle(task)} onMoveTo={(quadrant) => void moveTo(task, quadrant)} onPostpone={(day) => void patchDetails(task, { dueDate: day ? `${day}T23:59:59.000Z` : null }, 'taskUpdated')} onEdit={() => { setSheetId(null); setEditing(task) }} onDelete={() => void remove(task)} onMove={(direction) => void move(task, direction)} canMoveUp={canReorder(list[index - 1])} canMoveDown={canReorder(list[index + 1])} />
+    const canReorder = (neighbor: Task | undefined) => !!neighbor && dateValue(neighbor.dueDate) === dateValue(task.dueDate) && !list.some((item) => pendingTaskIds.has(item.id))
+    return <TaskDetails task={task} pending={pendingTaskIds.has(task.id)} canEdit={canOwn(task)} onToggle={() => void toggle(task)} onMoveTo={(quadrant) => void moveTo(task, quadrant)} onPostpone={(day) => void patchDetails(task, { dueDate: day ? `${day}T23:59:59.000Z` : null }, 'taskUpdated')} onEdit={() => { setSheetId(null); setEditing(task) }} onDelete={() => void remove(task)} onMove={(direction) => void move(task, direction)} canMoveUp={canReorder(list[index - 1])} canMoveDown={canReorder(list[index + 1])} />
   }
 
   return <div className="app-shell">
@@ -366,8 +377,8 @@ function AppShell() {
           <div className="quadrant-heading"><button className="quadrant-toggle" aria-expanded={!isCollapsed} aria-controls={`body-${quadrant.key}`} onClick={() => setCollapsed((current) => ({ ...current, [quadrant.key]: !isCollapsed }))}><Icon name={['bolt', 'calendar', 'user', 'trash'][quadrantIndex]} /><span><h2 id={`heading-${quadrant.key}`}>{t(quadrant.title)}</h2><span className="quadrant-hint">{t(quadrant.hint)}</span></span><Icon name={isCollapsed ? 'down' : 'up'} /></button><span className="task-count" aria-label={t('taskCount', { count: visible.length })}>{visible.length}</span>{overdue > 0 && <span className="quadrant-overdue">{t(overdue === 1 ? 'overdueCountOne' : 'overdueCount', { count: overdue })}</span>}{canCreate && <button className="icon-button quadrant-add" aria-label={`${t('addTask')}: ${t(quadrant.title)}`} onClick={() => createTask(quadrant.key)}><Icon name="plus" /></button>}</div>
           <div id={`body-${quadrant.key}`} className={`quadrant-body${isCollapsed ? ' collapsed' : ''}`}>
           {shouldWarnTaskCount(grouped[quadrant.key].length) && <div className="limit-warning" role="status">⚠ {t('tooManyTasks')}</div>}
-          {quadrant.key === 'not-urgent-important' && view !== 'completed' && scheduleDue.length > 0 && <div className="schedule-warning"><span>{t(scheduleDue.length === 1 ? 'scheduleWarningOne' : 'scheduleWarning', { count: scheduleDue.length })}</span>{scheduleDue.some(canOwn) && <button disabled={bulkMoving} onClick={() => void moveScheduleDue()}>{t('moveToNow')}</button>}</div>}
-          <div className="task-list">{visible.map((task) => <TaskCard key={task.id} task={task} selected={task.id === selectedId} canEdit={canOwn(task)} onSelect={() => setSelectedId(task.id)} onActions={() => openActions(task)} onEdit={() => setEditing(task)} onToggle={() => void toggle(task)} onDragStart={() => setDragged(task.id)} onDragEnd={() => { setDragged(null); setDropTarget(null) }} />)}
+          {quadrant.key === 'not-urgent-important' && view !== 'completed' && scheduleDue.length > 0 && <div className="schedule-warning"><span>{t(scheduleDue.length === 1 ? 'scheduleWarningOne' : 'scheduleWarning', { count: scheduleDue.length })}</span>{scheduleDue.some(canOwn) && <button disabled={bulkMoving || scheduleDue.some((task) => canOwn(task) && pendingTaskIds.has(task.id))} onClick={() => void moveScheduleDue()}>{t('moveToNow')}</button>}</div>}
+          <div className="task-list">{visible.map((task) => <TaskCard key={task.id} task={task} pending={pendingTaskIds.has(task.id)} selected={task.id === selectedId} canEdit={canOwn(task)} onSelect={() => setSelectedId(task.id)} onActions={() => openActions(task)} onEdit={() => setEditing(task)} onToggle={() => void toggle(task)} onDragStart={() => setDragged(task.id)} onDragEnd={() => { setDragged(null); setDropTarget(null) }} />)}
             {visible.length === 0 && <div className="empty-quadrant"><Icon name={['bolt', 'calendar', 'user', 'trash'][quadrantIndex]} /><p>{t(dropTarget === quadrant.key ? 'dropHere' : query ? 'noResults' : 'emptyQuadrant')}</p>{canCreate && !query && <small>{t('dragHint')}</small>}</div>}
           </div>
           {canCreate && <button className="quadrant-footer" onClick={() => createTask(quadrant.key)}><Icon name="plus" />{t('addTask')}</button>}
@@ -382,14 +393,14 @@ function AppShell() {
   </div>
 }
 
-function TaskCard({ task, selected, canEdit, onSelect, onActions, onEdit, onToggle, onDragStart, onDragEnd }: { task: Task; selected: boolean; canEdit: boolean; onSelect: () => void; onActions: () => void; onEdit: () => void; onToggle: () => void; onDragStart: () => void; onDragEnd: () => void }) {
+function TaskCard({ task, pending, selected, canEdit, onSelect, onActions, onEdit, onToggle, onDragStart, onDragEnd }: { task: Task; pending: boolean; selected: boolean; canEdit: boolean; onSelect: () => void; onActions: () => void; onEdit: () => void; onToggle: () => void; onDragStart: () => void; onDragEnd: () => void }) {
   const { t, locale } = useI18n()
   const [swiped, setSwiped] = useState(false)
   const touch = useRef<{ x: number; y: number; vertical: boolean } | null>(null)
   const suppressClick = useRef(false)
   const relative = task.dueDate ? relativeDueDate(task.dueDate) : null
   const overdue = !task.completed && relative === 'overdue'
-  return <article className={`task-card${task.completed ? ' completed' : ''}${selected ? ' selected' : ''}${swiped ? ' swiped' : ''}`} aria-label={task.title} tabIndex={0} draggable={canEdit}
+  return <article className={`task-card${task.completed ? ' completed' : ''}${selected ? ' selected' : ''}${swiped ? ' swiped' : ''}`} aria-label={task.title} aria-busy={pending} tabIndex={0} draggable={canEdit && !pending}
     onClick={(event) => {
       if (suppressClick.current) { suppressClick.current = false; return }
       if (!(event.target as Element).closest('button, input, select')) onSelect()
@@ -412,7 +423,7 @@ function TaskCard({ task, selected, canEdit, onSelect, onActions, onEdit, onTogg
     onTouchEnd={(event) => {
       const start = touch.current
       touch.current = null
-      if (!start || start.vertical || !event.changedTouches.length) return
+      if (pending || !start || start.vertical || !event.changedTouches.length) return
       const dx = event.changedTouches[0].clientX - start.x
       const dy = event.changedTouches[0].clientY - start.y
       if (Math.abs(dx) < 65 || Math.abs(dx) < Math.abs(dy) * 1.5) return
@@ -421,12 +432,12 @@ function TaskCard({ task, selected, canEdit, onSelect, onActions, onEdit, onTogg
       else if (canEdit) setSwiped(true)
     }}
     onDragStart={(event) => {
-    if (!canEdit || (event.target as Element).closest('button, summary, select, input')) { event.preventDefault(); return }
+    if (pending || !canEdit || (event.target as Element).closest('button, summary, select, input')) { event.preventDefault(); return }
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', task.id)
     onDragStart()
   }} onDragEnd={onDragEnd}>
-    <div className="task-card-main"><button className="check-button" aria-label={task.completed ? t('reopen') : t('complete')} aria-pressed={task.completed} onClick={onToggle}>{task.completed && <Icon name="check" />}</button>
+    <div className="task-card-main"><button className="check-button" disabled={pending} aria-label={task.completed ? t('reopen') : t('complete')} aria-pressed={task.completed} onClick={onToggle}>{task.completed && <Icon name="check" />}</button>
       <div className="task-copy"><h3>{task.title}</h3>{task.description && <p>{task.description}</p>}
         <div className="task-meta">
           {task.dueDate && <span className={overdue ? 'due overdue' : 'due'} title={dateValue(task.dueDate)}><Icon name="calendar" /><time dateTime={dateValue(task.dueDate)}>{relative && !task.completed ? t(relative) : new Date(`${dateValue(task.dueDate)}T12:00:00`).toLocaleDateString(locale, { day: 'numeric', month: 'short' })}</time></span>}
@@ -434,15 +445,15 @@ function TaskCard({ task, selected, canEdit, onSelect, onActions, onEdit, onTogg
         </div>
       </div>
       <div className="task-actions">
-        {canEdit && <button className="quick-edit" onClick={onEdit} aria-label={t('edit')}><Icon name="edit" /></button>}
-        <button className="icon-button task-more" aria-label={t('taskActions', { title: task.title })} onClick={onActions}><Icon name="more" /></button>
+        {canEdit && <button className="quick-edit" disabled={pending} onClick={onEdit} aria-label={t('edit')}><Icon name="edit" /></button>}
+        <button className="icon-button task-more" disabled={pending} aria-label={t('taskActions', { title: task.title })} onClick={onActions}><Icon name="more" /></button>
       </div>
     </div>
-    {swiped && canEdit && <div className="swipe-actions"><button onClick={() => { setSwiped(false); onActions() }}><Icon name="calendar" />{t('postpone')}</button><button onClick={() => { setSwiped(false); onActions() }}><Icon name="grid" />{t('move')}</button></div>}
+    {swiped && canEdit && <div className="swipe-actions"><button disabled={pending} onClick={() => { setSwiped(false); onActions() }}><Icon name="calendar" />{t('postpone')}</button><button disabled={pending} onClick={() => { setSwiped(false); onActions() }}><Icon name="grid" />{t('move')}</button></div>}
   </article>
 }
 
-function TaskDetails({ task, canEdit, onToggle, onMoveTo, onPostpone, onEdit, onDelete, onMove, canMoveUp, canMoveDown }: { task: Task; canEdit: boolean; onToggle: () => void; onMoveTo: (quadrant: Quadrant) => void; onPostpone: (day: string) => void; onEdit: () => void; onDelete: () => void; onMove: (direction: -1 | 1) => void; canMoveUp: boolean; canMoveDown: boolean }) {
+function TaskDetails({ task, pending, canEdit, onToggle, onMoveTo, onPostpone, onEdit, onDelete, onMove, canMoveUp, canMoveDown }: { task: Task; pending: boolean; canEdit: boolean; onToggle: () => void; onMoveTo: (quadrant: Quadrant) => void; onPostpone: (day: string) => void; onEdit: () => void; onDelete: () => void; onMove: (direction: -1 | 1) => void; canMoveUp: boolean; canMoveDown: boolean }) {
   const { t, locale } = useI18n()
   return <div className="task-detail-content">
     <h3>{task.title}</h3>
@@ -451,6 +462,7 @@ function TaskDetails({ task, canEdit, onToggle, onMoveTo, onPostpone, onEdit, on
     <p className="detail-date"><Icon name="calendar" />{task.dueDate ? <time dateTime={dateValue(task.dueDate)}>{new Date(`${dateValue(task.dueDate)}T12:00:00`).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' })}</time> : t('noDueDate')}</p>
     {task.owner?.email && <p className="owner-detail">{t('assignedBy')}: {task.owner.email}</p>}
     {task.assignee?.email && <p className="owner-detail">{t('assignedTo')}: {task.assignee.email}</p>}
+    <fieldset className="detail-controls" disabled={pending} aria-busy={pending} aria-label={t('taskActions', { title: task.title })}>
     <button className="button button-secondary" onClick={onToggle}><Icon name="check" />{task.completed ? t('reopen') : t('complete')}</button>
     {canEdit ? <div className="detail-actions">
       <h4>{t('moveTo')}</h4>
@@ -461,6 +473,7 @@ function TaskDetails({ task, canEdit, onToggle, onMoveTo, onPostpone, onEdit, on
       <div className="detail-order"><button disabled={!canMoveUp} onClick={() => onMove(-1)}><Icon name="up" />{t('moveUp')}</button><button disabled={!canMoveDown} onClick={() => onMove(1)}><Icon name="down" />{t('moveDown')}</button></div>
       <div className="detail-edit"><button onClick={onEdit}><Icon name="edit" />{t('edit')}</button><button className="danger-action" onClick={onDelete}><Icon name="trash" />{t('delete')}</button></div>
     </div> : <p className="readonly-note">{t('assignedReadOnly')}</p>}
+    </fieldset>
   </div>
 }
 

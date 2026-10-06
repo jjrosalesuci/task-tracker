@@ -283,6 +283,7 @@ button:focus-visible, summary:focus-visible, select:focus-visible { outline: 3px
 .detail-heading .icon-button { min-width: 40px; min-height: 40px; align-items: center; justify-content: center; }
 .details-placeholder { display: grid; justify-items: center; align-content: center; min-height: 300px; color: #84959c; text-align: center; font-size: .85rem; }
 .details-placeholder svg { width: 36px; height: 36px; }
+.task-detail-content, .task-detail-content fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .task-detail-content h3 { margin: 0 0 .75rem; font-size: 1.05rem; line-height: 1.35; overflow-wrap: anywhere; }
 .task-detail-content p { overflow-wrap: anywhere; }
 .task-detail-content .readonly-note { font-size: .8rem; }
