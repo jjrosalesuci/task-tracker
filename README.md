@@ -10,9 +10,30 @@ desde la raíz:
 
 La aplicación escucha en el puerto `3000`.
 
+## Matriz y acciones rápidas
+
+En móvil, el resumen 2×2 permite saltar a cada cuadrante y los encabezados
+permiten plegarlos. La búsqueda se abre desde la lupa y **Nueva tarea** es un
+botón flotante. Deslizar una tarea a la derecha la completa; a la izquierda
+muestra **Posponer** y **Mover**. El menú **⋮** abre una hoja de acciones.
+
+En escritorio, la barra lateral permite elegir espacio y vista, y seleccionar
+una tarea muestra sus notas y acciones en el panel derecho. **N** crea una tarea
+y **⌘K / Ctrl K** enfoca la búsqueda. El idioma y el cierre de sesión están en
+**Configuración**, junto al nombre.
+
+Las tareas se ordenan por fecha, con las vencidas primero y las que no tienen
+fecha al final. **Hoy** incluye las pendientes que vencen hoy o antes;
+**Próximos 7 días** abarca desde hoy hasta seis días después; **Completadas**
+permite consultar y reabrir las tareas terminadas del espacio elegido.
+El aviso de **Planificar** permite mover a **Hacer ahora** las tareas que ya
+vencen hoy o antes. Los propietarios pueden mover y posponer tareas a mañana,
+al próximo lunes o a una fecha elegida; las personas asignadas solo pueden
+cambiar su estado. También se conserva el arrastre entre cuadrantes.
+
 ## Reporte de tareas
 
-Las tareas completadas dejan de aparecer en todos los cuadrantes de la matriz.
+Las tareas completadas dejan de aparecer en todos los cuadrantes de la vista Matriz.
 El menú **Reporte de tareas** permite consultar tareas propias y asignadas de
 las matrices personal y profesional; inicialmente muestra las completadas.
 Se pueden combinar filtros de texto, estado, matriz, relación y cuadrante,
