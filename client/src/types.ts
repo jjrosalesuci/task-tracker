@@ -3,7 +3,7 @@ export type Quadrant = 'urgent-important' | 'not-urgent-important' | 'urgent-not
 
 export interface User {
   id: string
-  name: string
+  name?: string | null
   email: string
   locale?: 'es' | 'en'
 }

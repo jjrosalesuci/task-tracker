@@ -5,8 +5,9 @@ import { App } from './App'
 import { I18nProvider } from './contexts/I18nContext'
 import { api } from './lib/api'
 import { addDays, localDay, nextMonday } from './lib/task-utils'
+import type { User } from './types'
 
-const { logout, currentUser } = vi.hoisted(() => ({ logout: vi.fn(), currentUser: { id: 'owner', name: 'Juan', email: 'juan@example.com' } }))
+const { logout, currentUser } = vi.hoisted(() => ({ logout: vi.fn(), currentUser: { id: 'owner', name: 'Juan', email: 'juan@example.com' } as User }))
 vi.mock('./contexts/AuthContext', () => ({
   useAuth: () => ({ user: currentUser, loading: false, logout }),
 }))
@@ -46,6 +47,18 @@ async function renderApp() {
 }
 
 describe('compact task workspace', () => {
+  describe.each(['en', 'es'] as const)('greeting in %s', (locale) => {
+    it.each([undefined, null, '', ' \t '])('falls back to email when the name is %j', async (name) => {
+      if (name === undefined) delete currentUser.name
+      else currentUser.name = name
+      localStorage.setItem('locale', locale)
+
+      await renderApp()
+
+      expect(screen.getByRole('heading', { name: `${locale === 'en' ? 'Hello' : 'Hola'}, juan` })).toBeInTheDocument()
+    })
+  })
+
   it('excludes completed tasks from every quadrant, counts, search and notifications', async () => {
     const completed = [
       { ...completedTask, id: 'done-now', urgent: true, important: true },
