@@ -4,10 +4,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { App } from './App'
 import { I18nProvider } from './contexts/I18nContext'
 import { api } from './lib/api'
+import { addDays, localDay, nextMonday } from './lib/task-utils'
 
-const { logout } = vi.hoisted(() => ({ logout: vi.fn() }))
+const { logout, currentUser } = vi.hoisted(() => ({ logout: vi.fn(), currentUser: { id: 'owner', name: 'Juan', email: 'juan@example.com' } }))
 vi.mock('./contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'owner', name: 'Juan', email: 'juan@example.com' }, loading: false, logout }),
+  useAuth: () => ({ user: currentUser, loading: false, logout }),
 }))
 vi.mock('./lib/api', async (importOriginal) => ({
   ...await importOriginal<typeof import('./lib/api')>(),
@@ -32,10 +33,11 @@ beforeAll(() => {
 })
 beforeEach(() => {
   vi.clearAllMocks()
+  currentUser.name = 'Juan'
   localStorage.setItem('locale', 'en')
   request.mockResolvedValue({ tasks: [firstTask, secondTask] })
 })
-afterEach(() => { cleanup(); vi.useRealTimers() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 async function renderApp() {
   render(<I18nProvider><App /></I18nProvider>)
@@ -114,10 +116,11 @@ describe('compact task workspace', () => {
     expect(screen.getByRole('button', { name: 'Task report' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('shows compact metadata, explicit priority and an unchecked pending task', async () => {
+  it('shows compact metadata without priority and an unchecked pending task', async () => {
     await renderApp()
     const card = within(screen.getByRole('article', { name: firstTask.title }))
-    expect(card.getByText('High')).toBeInTheDocument()
+    expect(card.queryByText('High')).not.toBeInTheDocument()
+    expect(card.getByText('Overdue')).toBeInTheDocument()
     expect(card.getByText('ana')).toHaveAttribute('title', 'Assigned to: ana@example.com')
     expect(card.getByRole('button', { name: 'Complete' })).toHaveAttribute('aria-pressed', 'false')
     expect(card.getByRole('button', { name: 'Complete' }).querySelector('svg')).toBeNull()
@@ -143,7 +146,7 @@ describe('compact task workspace', () => {
       expect(rows[1].querySelector(`time[datetime="${completedTask.completedAt}"]`)).not.toBeNull()
       expect(screen.queryByRole('heading', { name: firstTask.title })).not.toBeInTheDocument()
       expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'New task' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'New task N' })).toBeInTheDocument()
     })
 
     it('combines matrix, relationship, quadrant and search filters and resets them', async () => {
@@ -214,7 +217,7 @@ describe('compact task workspace', () => {
     const user = await renderApp()
     const search = screen.getByRole('searchbox')
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
-    expect(search).toHaveFocus()
+    await waitFor(() => expect(search).toHaveFocus())
     await user.type(search, 'release')
     expect(screen.queryByRole('article', { name: firstTask.title })).not.toBeInTheDocument()
     expect(screen.getByRole('article', { name: secondTask.title })).toBeInTheDocument()
@@ -224,28 +227,50 @@ describe('compact task workspace', () => {
     await user.keyboard('{Escape}')
     expect(screen.getAllByRole('article')).toHaveLength(2)
     fireEvent.keyDown(window, { key: 'K', metaKey: true })
-    expect(search).toHaveFocus()
+    await waitFor(() => expect(search).toHaveFocus())
     expect(request).toHaveBeenCalledTimes(1)
   })
 
-  it('opens card actions and dismisses them with Escape and outside clicks', async () => {
+  it('opens a native action sheet and restores focus on dismissal', async () => {
     const user = await renderApp()
     const trigger = screen.getByLabelText('Actions for Fix service')
     await user.click(trigger)
     expect(screen.getByRole('button', { name: 'Delete' })).toBeVisible()
-    await user.keyboard('{Escape}')
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }))
     expect(trigger).toHaveFocus()
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
     await user.click(trigger)
-    await user.click(screen.getByRole('heading', { name: 'Hello, Juan' }))
-    expect(trigger.closest('details')).not.toHaveAttribute('open')
+    fireEvent.click(screen.getByRole('dialog'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('clears a completed action sheet so N can immediately open a new task', async () => {
+    const user = await renderApp()
+    await user.click(screen.getByLabelText('Actions for Fix service'))
+    request.mockResolvedValueOnce({ task: { ...firstTask, status: 'COMPLETED' } })
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Complete' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    fireEvent.keyDown(window, { key: 'n' })
+    expect(screen.getByRole('dialog', { name: 'New task' })).toBeInTheDocument()
+  })
+
+  it('clears the sheet when postponing out of Today and restores search shortcuts', async () => {
+    const user = await renderApp()
+    await user.click(screen.getByRole('button', { name: /^Today/ }))
+    await screen.findByRole('article', { name: firstTask.title })
+    await user.click(screen.getByLabelText('Actions for Fix service'))
+    request.mockResolvedValueOnce({ task: { ...firstTask, dueDate: `${addDays(localDay(), 1)}T23:59:59.000Z` } })
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Tomorrow' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+    await waitFor(() => expect(screen.getByRole('searchbox')).toHaveFocus())
   })
 
   it('moves through the keyboard/touch menu and appends after all destination tasks', async () => {
     const user = await renderApp()
     request.mockResolvedValueOnce({ task: { ...firstTask, urgent: false, position: 5 } })
     await user.click(screen.getByLabelText('Actions for Fix service'))
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'not-urgent-important')
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Schedule' }))
     await waitFor(() => expect(request).toHaveBeenLastCalledWith('/tasks/first', {
       method: 'PATCH', body: { urgent: false, important: true, position: 5 },
     }))
@@ -273,7 +298,7 @@ describe('compact task workspace', () => {
     const user = await renderApp()
     request.mockRejectedValueOnce(new Error('Move failed'))
     await user.click(screen.getByLabelText('Actions for Fix service'))
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Move to' }), 'urgent-not-important')
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delegate' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong. Please try again.')
     expect(within(screen.getByRole('region', { name: 'Do now' })).getByRole('article')).toBeInTheDocument()
   })
@@ -289,6 +314,49 @@ describe('compact task workspace', () => {
     expect(request).toHaveBeenLastCalledWith('/tasks/reorder/batch', { method: 'POST', body: { items: [{ id: 'third', position: 0 }, { id: 'first', position: 1 }] } })
   })
 
+  it('locks every task in a positional batch reorder until the request settles', async () => {
+    const neighbor = { ...firstTask, id: 'neighbor', title: 'Neighbor task', position: 1 }
+    request.mockResolvedValueOnce({ tasks: [firstTask, neighbor] })
+    const user = await renderApp()
+    let resolveReorder!: (value: unknown) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { resolveReorder = resolve }))
+    await user.click(screen.getByRole('article', { name: firstTask.title }))
+    const panel = within(screen.getByRole('complementary', { name: 'Task details' }))
+    await user.click(panel.getByRole('button', { name: 'Move down' }))
+    expect(request).toHaveBeenLastCalledWith('/tasks/reorder/batch', {
+      method: 'POST', body: { items: [{ id: 'neighbor', position: 0 }, { id: 'first', position: 1 }] },
+    })
+    expect(screen.getByRole('article', { name: firstTask.title })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('article', { name: neighbor.title })).toHaveAttribute('aria-busy', 'true')
+    expect(within(screen.getByRole('article', { name: neighbor.title })).getByRole('button', { name: 'Complete' })).toBeDisabled()
+    await act(async () => { resolveReorder(undefined) })
+    expect(screen.getByRole('article', { name: firstTask.title })).toHaveAttribute('aria-busy', 'false')
+    expect(screen.getByRole('article', { name: neighbor.title })).toHaveAttribute('aria-busy', 'false')
+  })
+
+  it('disables positional reordering across different due dates', async () => {
+    const later = { ...firstTask, id: 'later', title: 'Later work', dueDate: '2020-01-03T23:59:59.000Z', position: 1 }
+    request.mockResolvedValueOnce({ tasks: [firstTask, later] })
+    const user = await renderApp()
+    await user.click(screen.getByLabelText('Actions for Fix service'))
+    expect(screen.getByRole('button', { name: 'Move down' })).toBeDisabled()
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }))
+    await user.click(screen.getByLabelText('Actions for Later work'))
+    expect(screen.getByRole('button', { name: 'Move up' })).toBeDisabled()
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves positional reordering between undated tasks', async () => {
+    const undated = { ...firstTask, dueDate: null }
+    const next = { ...undated, id: 'next', title: 'Next work', position: 1 }
+    request.mockResolvedValueOnce({ tasks: [undated, next] })
+    const user = await renderApp()
+    await user.click(screen.getByLabelText('Actions for Fix service'))
+    request.mockResolvedValueOnce(undefined)
+    await user.click(screen.getByRole('button', { name: 'Move down' }))
+    expect(request).toHaveBeenLastCalledWith('/tasks/reorder/batch', { method: 'POST', body: { items: [{ id: 'next', position: 0 }, { id: 'first', position: 1 }] } })
+  })
+
   it('limits assignees to completion, without drag, edit, delete or category changes', async () => {
     const user = await renderApp()
     const assignedTask = { ...firstTask, ownerId: 'someone-else' }
@@ -301,11 +369,9 @@ describe('compact task workspace', () => {
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Move to' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'View full description', expanded: false }))
-    expect(within(card).getByText(firstTask.description)).toHaveClass('expanded')
-    await user.click(screen.getByLabelText('Actions for Fix service'))
-    await user.click(screen.getByRole('button', { name: 'Collapse description', expanded: true }))
-    expect(within(card).getByText(firstTask.description)).not.toHaveClass('expanded')
+    expect(within(screen.getByRole('dialog')).getByText(firstTask.description)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Tomorrow' })).not.toBeInTheDocument()
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }))
     fireEvent.drop(screen.getByRole('region', { name: 'Schedule' }), { dataTransfer: { getData: () => 'first' } })
     expect(request).toHaveBeenCalledTimes(2)
     request.mockResolvedValueOnce({ task: { ...assignedTask, status: 'COMPLETED' } })
@@ -313,22 +379,47 @@ describe('compact task workspace', () => {
     await waitFor(() => expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { status: 'COMPLETED' } }))
   })
 
+  it('disables positional reordering in Assigned to me even for owned tasks', async () => {
+    const selfAssigned = { ...firstTask, assignedTo: { id: 'owner', email: 'juan@example.com' }, dueDate: '2020-01-02T23:59:59.000Z' }
+    const neighbor = { ...selfAssigned, id: 'neighbor', title: 'Assigned neighbor', ownerId: 'someone-else', owner: { id: 'someone-else', email: 'ana@example.com' }, position: 1 }
+    const user = await renderApp()
+    request.mockResolvedValueOnce({ tasks: [selfAssigned, neighbor] })
+    await user.click(screen.getByRole('button', { name: 'Assigned to me' }))
+    await screen.findByRole('article', { name: selfAssigned.title })
+    await user.click(screen.getByLabelText(`Actions for ${selfAssigned.title}`))
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Move down' })).toBeDisabled()
+    expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('hides the Today count when the current view does not contain the owned-task dataset', async () => {
+    const assignedTask = { ...firstTask, ownerId: 'someone-else', assignedTo: { id: 'owner', email: 'juan@example.com' } }
+    request.mockResolvedValue({ tasks: [assignedTask] })
+    const user = await renderApp()
+    const todayButton = screen.getByRole('button', { name: /^Today/ })
+    expect(todayButton.querySelector('.nav-count')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Assigned to me' }))
+    await screen.findByRole('article', { name: assignedTask.title })
+    expect(todayButton.querySelector('.nav-count')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Task report' }))
+    expect(todayButton.querySelector('.nav-count')).toBeNull()
+  })
+
   it('shows only pending due notifications from the current view and supports logout', async () => {
     const user = await renderApp()
     await user.click(screen.getByLabelText('Notifications'))
     expect(screen.getByRole('heading', { name: 'Due dates in this view' })).toBeVisible()
     expect(screen.getByRole('button', { name: /Fix service Overdue/ })).toBeVisible()
-    expect(screen.queryByRole('button', { name: /Plan release/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Plan release/ })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Fix service Overdue/ }))
     expect(screen.getByRole('searchbox')).toHaveValue('Fix service')
-    await user.click(screen.getByLabelText('User menu'))
+    await user.click(screen.getByLabelText('Settings'))
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
     expect(logout).toHaveBeenCalledOnce()
   })
 
   it('creates in the chosen empty quadrant and automatically dismisses the toast', async () => {
     const user = await renderApp()
-    await user.click(within(screen.getByRole('region', { name: 'Delegate' })).getByRole('button', { name: 'New task' }))
+    await user.click(within(screen.getByRole('region', { name: 'Delegate' })).getByRole('button', { name: 'Add task: Delegate' }))
     const dialog = screen.getByRole('dialog', { name: 'New task' })
     expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveFocus()
     expect(within(dialog).getByRole('combobox', { name: 'Move to' })).toHaveValue('urgent-not-important')
@@ -363,7 +454,331 @@ describe('compact task workspace', () => {
     localStorage.setItem('locale', 'es')
     await renderApp()
     expect(screen.getByRole('searchbox', { name: 'Buscar en esta vista…' })).toBeInTheDocument()
-    expect(screen.getByText('Alta')).toBeInTheDocument()
-    expect(screen.getByText('2 ene 2020')).toBeInTheDocument()
+    expect(screen.queryByText('Alta')).not.toBeInTheDocument()
+    const card = within(screen.getByRole('article', { name: firstTask.title }))
+    expect(card.getByText('Vencida')).toBeInTheDocument()
+    expect(card.getByText('Vencida').closest('time')).toHaveAttribute('datetime', '2020-01-02')
+    expect(screen.getAllByText('1 vencida')).toHaveLength(2)
+    expect(screen.queryByText('1 vencidas')).not.toBeInTheDocument()
+  })
+
+  it('greets the real first name, displays the local weekday and keeps language in settings', async () => {
+    currentUser.name = 'María Elena'
+    const user = await renderApp()
+    expect(screen.getByRole('heading', { name: 'Hello, María' })).toBeInTheDocument()
+    expect(screen.getByText(new Date().toLocaleDateString('en', { weekday: 'long', day: 'numeric', month: 'long' }))).toBeInTheDocument()
+    expect(within(screen.getByRole('banner')).queryByRole('combobox', { name: 'Language' })).not.toBeInTheDocument()
+    await user.click(screen.getByLabelText('Settings'))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'es')
+    expect(screen.getByRole('heading', { name: 'Hola, María' })).toBeInTheDocument()
+  })
+
+  it('provides language and sign out inside the mobile avatar menu', async () => {
+    const user = await renderApp()
+    const header = within(screen.getByRole('banner'))
+    expect(header.queryByRole('combobox', { name: 'Language' })).not.toBeInTheDocument()
+    await user.click(header.getByLabelText('User menu'))
+    expect(header.getByRole('combobox', { name: 'Language' })).toBeInTheDocument()
+    await user.click(header.getByRole('button', { name: 'Sign out' }))
+    expect(logout).toHaveBeenCalledOnce()
+  })
+
+  it('expands and focuses quadrants from summary cards and collapses headers', async () => {
+    const user = await renderApp()
+    const delegate = within(screen.getByRole('region', { name: 'Delegate' }))
+    const toggle = delegate.getByRole('button', { name: /Delegate Urgent/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(screen.getByRole('button', { name: 'Show Delegate' }))
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle).toHaveFocus()
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('selects task details with the keyboard and postpones/moves inline without a dialog', async () => {
+    const user = await renderApp()
+    const row = screen.getByRole('article', { name: firstTask.title })
+    row.focus()
+    await user.keyboard('{Enter}')
+    const panel = within(screen.getByRole('complementary', { name: 'Task details' }))
+    expect(panel.getByText(firstTask.description)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    const tomorrow = addDays(localDay(), 1)
+    request.mockResolvedValueOnce({ task: { ...firstTask, dueDate: `${tomorrow}T23:59:59.000Z` } })
+    await user.click(panel.getByRole('button', { name: 'Tomorrow' }))
+    expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { dueDate: `${tomorrow}T23:59:59.000Z` } })
+    request.mockResolvedValueOnce({ task: { ...firstTask, urgent: false, position: 5 } })
+    await user.click(panel.getByRole('button', { name: 'Schedule' }))
+    await waitFor(() => expect(panel.getByRole('button', { name: 'Schedule' })).toHaveAttribute('aria-pressed', 'true'))
+    await user.click(screen.getByRole('tab', { name: 'Professional' }))
+    expect(panel.queryByText(firstTask.description)).not.toBeInTheDocument()
+    expect(request).toHaveBeenLastCalledWith('/tasks?matrix=WORK&scope=owned')
+  })
+
+  it('disables conflicting controls per task while postponing and reenables them after success', async () => {
+    const user = await renderApp()
+    const row = screen.getByRole('article', { name: firstTask.title })
+    await user.click(row)
+    const panel = within(screen.getByRole('complementary', { name: 'Task details' }))
+    let resolvePatch!: (value: unknown) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { resolvePatch = resolve }))
+    await user.click(panel.getByRole('button', { name: 'Tomorrow' }))
+    expect(panel.getByRole('group', { name: 'Actions for Fix service' })).toHaveAttribute('aria-busy', 'true')
+    expect(panel.getByRole('button', { name: 'Schedule' })).toBeDisabled()
+    expect(panel.getByLabelText('Choose date')).toBeDisabled()
+    expect(panel.getByRole('button', { name: 'Edit' })).toBeDisabled()
+    expect(panel.getByRole('button', { name: 'Delete' })).toBeDisabled()
+    expect(within(row).getByRole('button', { name: 'Complete' })).toBeDisabled()
+    expect(within(row).getByRole('button', { name: 'Actions for Fix service' })).toBeDisabled()
+    expect(row).toHaveAttribute('draggable', 'false')
+    expect(within(screen.getByRole('article', { name: secondTask.title })).getByRole('button', { name: 'Complete' })).toBeEnabled()
+    await user.click(panel.getByRole('button', { name: 'Schedule' }))
+    expect(request).toHaveBeenCalledTimes(2)
+
+    const dueDate = `${addDays(localDay(), 1)}T23:59:59.000Z`
+    await act(async () => { resolvePatch({ task: { ...firstTask, dueDate } }) })
+    expect(panel.getByRole('group', { name: 'Actions for Fix service' })).toHaveAttribute('aria-busy', 'false')
+    expect(panel.getByRole('button', { name: 'Schedule' })).toBeEnabled()
+    expect(panel.getByLabelText('Choose date')).toBeEnabled()
+    expect(row).toHaveAttribute('draggable', 'true')
+    request.mockResolvedValueOnce({ task: { ...firstTask, dueDate, urgent: false, position: 5 } })
+    await user.click(panel.getByRole('button', { name: 'Schedule' }))
+    expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { urgent: false, important: true, position: 5 } })
+    expect(panel.getByLabelText('Choose date')).toHaveValue(dueDate.slice(0, 10))
+  })
+
+  it('disables custom-date edits in the sheet until a failed request settles and allows retry', async () => {
+    const user = await renderApp()
+    await user.click(screen.getByLabelText('Actions for Fix service'))
+    const sheet = within(screen.getByRole('dialog'))
+    let rejectPatch!: (reason: unknown) => void
+    request.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPatch = reject }))
+    fireEvent.change(sheet.getByLabelText('Choose date'), { target: { value: '2027-01-01' } })
+    expect(sheet.getByLabelText('Choose date')).toBeDisabled()
+    expect(sheet.getByRole('button', { name: 'Tomorrow' })).toBeDisabled()
+    expect(sheet.getByRole('button', { name: 'Schedule' })).toBeDisabled()
+    expect(sheet.getByRole('group', { name: 'Actions for Fix service' })).toHaveAttribute('aria-busy', 'true')
+    await user.click(sheet.getByRole('button', { name: 'Tomorrow' }))
+    expect(request).toHaveBeenCalledTimes(2)
+    await act(async () => { rejectPatch(new Error('Offline')) })
+    expect(sheet.getByRole('alert')).toBeInTheDocument()
+    expect(sheet.getByLabelText('Choose date')).toBeEnabled()
+    expect(sheet.getByRole('button', { name: 'Schedule' })).toBeEnabled()
+    expect(sheet.getByRole('group', { name: 'Actions for Fix service' })).toHaveAttribute('aria-busy', 'false')
+    request.mockResolvedValueOnce({ task: { ...firstTask, dueDate: '2027-02-02T23:59:59.000Z' } })
+    fireEvent.change(sheet.getByLabelText('Choose date'), { target: { value: '2027-02-02' } })
+    await waitFor(() => expect(sheet.getByLabelText('Choose date')).toBeEnabled())
+    expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { dueDate: '2027-02-02T23:59:59.000Z' } })
+    expect(sheet.getByLabelText('Choose date')).toHaveValue('2027-02-02')
+  })
+
+  it('locks task controls while an edit is being saved', async () => {
+    const user = await renderApp()
+    await user.click(screen.getByRole('article', { name: firstTask.title }))
+    const panel = within(screen.getByRole('complementary', { name: 'Task details' }))
+    await user.click(panel.getByRole('button', { name: 'Edit' }))
+    const dialog = screen.getByRole('dialog', { name: 'Edit task' })
+    let resolveSave!: (value: unknown) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { resolveSave = resolve }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const row = screen.getByRole('article', { name: firstTask.title })
+    expect(row).toHaveAttribute('aria-busy', 'true')
+    expect(within(row).getByRole('button', { name: 'Edit' })).toBeDisabled()
+    expect(panel.getByRole('group', { name: `Actions for ${firstTask.title}` })).toHaveAttribute('aria-busy', 'true')
+    expect(panel.getByRole('button', { name: 'Complete' })).toBeDisabled()
+    await act(async () => { resolveSave({ task: firstTask }) })
+    expect(row).toHaveAttribute('aria-busy', 'false')
+    expect(panel.getByRole('group', { name: `Actions for ${firstTask.title}` })).toHaveAttribute('aria-busy', 'false')
+  })
+
+  it('opens inline details rather than a sheet from desktop actions at 1100px', async () => {
+    const matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('matchMedia', matchMedia)
+    const user = await renderApp()
+    await user.click(screen.getByLabelText('Actions for Fix service'))
+    expect(matchMedia).toHaveBeenCalledWith('(min-width: 1100px)')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('complementary', { name: 'Task details' })).getByText(firstTask.description)).toBeInTheDocument()
+    const empty = within(screen.getByRole('region', { name: 'Delegate' }))
+    const toggle = empty.getByRole('button', { name: /Delegate Urgent/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(empty.getByText('Drag tasks here or create a new one.')).toBeInTheDocument()
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('offers next Monday and a calendar date from the action sheet, preserving unrelated fields', async () => {
+    const user = await renderApp()
+    await user.click(screen.getByLabelText('Actions for Fix service'))
+    const sheet = within(screen.getByRole('dialog'))
+    const monday = nextMonday()
+    request.mockResolvedValueOnce({ task: { ...firstTask, dueDate: `${monday}T23:59:59.000Z` } })
+    await user.click(sheet.getByRole('button', { name: 'Next Monday' }))
+    expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { dueDate: `${monday}T23:59:59.000Z` } })
+    request.mockResolvedValueOnce({ task: { ...firstTask, dueDate: '2027-01-01T23:59:59.000Z' } })
+    fireEvent.change(sheet.getByLabelText('Choose date'), { target: { value: '2027-01-01' } })
+    await waitFor(() => expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { dueDate: '2027-01-01T23:59:59.000Z' } }))
+  })
+
+  it('filters Today, Next 7 days and Completed while clearing the selection', async () => {
+    const tomorrowTask = { ...secondTask, dueDate: `${addDays(localDay(), 1)}T23:59:59.000Z` }
+    request.mockResolvedValue({ tasks: [firstTask, tomorrowTask, completedTask] })
+    const user = await renderApp()
+    await user.click(screen.getByRole('article', { name: firstTask.title }))
+    await user.click(screen.getByRole('button', { name: /^Today/ }))
+    expect(await screen.findByRole('article', { name: firstTask.title })).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: secondTask.title })).not.toBeInTheDocument()
+    expect(screen.getByText('Select a task to see its details.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Next 7 days' }))
+    expect(await screen.findByRole('article', { name: secondTask.title })).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: firstTask.title })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Completed' }))
+    expect(await screen.findByRole('article', { name: completedTask.title })).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: secondTask.title })).not.toBeInTheDocument()
+  })
+
+  it('refreshes Today membership at midnight and when the app resumes', async () => {
+    const day = localDay()
+    const tomorrowTask = { ...firstTask, dueDate: `${addDays(day, 1)}T23:59:59.000Z` }
+    const laterTask = { ...secondTask, dueDate: `${addDays(day, 2)}T23:59:59.000Z` }
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(`${day}T23:59:59.500`))
+    request.mockResolvedValue({ tasks: [tomorrowTask, laterTask] })
+    render(<I18nProvider><App /></I18nProvider>)
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByRole('article', { name: tomorrowTask.title })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Today/ }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByRole('article', { name: tomorrowTask.title })).not.toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: laterTask.title })).not.toBeInTheDocument()
+    await act(async () => { await vi.advanceTimersByTimeAsync(501) })
+    expect(screen.getByRole('article', { name: tomorrowTask.title })).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: laterTask.title })).not.toBeInTheDocument()
+    vi.setSystemTime(new Date(`${addDays(day, 2)}T12:00:00`))
+    fireEvent(window, new Event('focus'))
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByRole('article', { name: laterTask.title })).toBeInTheDocument()
+  })
+
+  it('moves all owner Schedule tasks due today or earlier without locking out other tasks', async () => {
+    const today = { ...secondTask, id: 'today', dueDate: `${localDay()}T23:59:59.000Z` }
+    const overdue = { ...secondTask, id: 'overdue', dueDate: '2020-01-02T23:59:59.000Z' }
+    const tomorrow = { ...secondTask, id: 'tomorrow', dueDate: `${addDays(localDay(), 1)}T23:59:59.000Z` }
+    const other = { ...overdue, id: 'other-owner', ownerId: 'someone-else' }
+    request.mockResolvedValueOnce({ tasks: [firstTask, today, overdue, tomorrow, other, { ...today, id: 'done', status: 'COMPLETED' }] })
+    const user = await renderApp()
+    const resolvers: Array<() => void> = []
+    request.mockImplementation((path, options) => new Promise((resolve) => {
+      const task = path.endsWith('today') ? today : path.endsWith('overdue') ? overdue : firstTask
+      resolvers.push(() => resolve({ task: { ...task, ...(options?.body as object) } }))
+    }))
+    expect(screen.getByText('3 Schedule tasks are due today or overdue.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Move to Do now' }))
+    expect(request).toHaveBeenCalledWith('/tasks/today', { method: 'PATCH', body: { urgent: true, important: true, position: 1 } })
+    expect(request).toHaveBeenCalledWith('/tasks/overdue', { method: 'PATCH', body: { urgent: true, important: true, position: 2 } })
+    expect(request.mock.calls.filter(([, options]) => options?.method === 'PATCH')).toHaveLength(2)
+    await user.click(within(screen.getByRole('article', { name: firstTask.title })).getByRole('button', { name: 'Complete' }))
+    expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { status: 'COMPLETED' } })
+    await act(async () => { resolvers.forEach((resolve) => resolve()) })
+    expect(screen.queryByRole('button', { name: 'Move to Do now' })).not.toBeInTheDocument()
+    expect(screen.getByText('1 Schedule task is due today or overdue.')).toBeInTheDocument()
+  })
+
+  it('ignores stale detail mutation responses after switching spaces', async () => {
+    const user = await renderApp()
+    await user.click(screen.getByRole('article', { name: firstTask.title }))
+    let resolvePatch!: (value: unknown) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { resolvePatch = resolve }))
+    await user.click(screen.getByRole('button', { name: 'Tomorrow' }))
+    request.mockResolvedValueOnce({ tasks: [] })
+    await user.click(screen.getByRole('tab', { name: 'Professional' }))
+    await waitFor(() => expect(screen.queryByRole('article')).not.toBeInTheDocument())
+    await act(async () => { resolvePatch({ task: { ...firstTask, title: 'Stale response' } }) })
+    expect(screen.queryByText('Stale response')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('ignores a stale failed bulk move after switching views', async () => {
+    const scheduled = { ...secondTask, dueDate: '2020-01-02T23:59:59.000Z' }
+    request.mockResolvedValueOnce({ tasks: [firstTask, scheduled] })
+    const user = await renderApp()
+    let rejectPatch!: (reason: unknown) => void
+    request.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPatch = reject }))
+    await user.click(screen.getByRole('button', { name: 'Move to Do now' }))
+    request.mockResolvedValueOnce({ tasks: [] })
+    await user.click(screen.getByRole('button', { name: 'Completed' }))
+    await act(async () => { rejectPatch(new Error('Stale failure')) })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('article')).not.toBeInTheDocument()
+  })
+
+  it('opens new tasks with N only outside editing controls, modifiers and dialogs', async () => {
+    const user = await renderApp()
+    for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey']) {
+      fireEvent.keyDown(window, { key: 'n', [modifier]: true })
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    }
+    await user.click(screen.getByRole('searchbox'))
+    await user.keyboard('n')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.clear(screen.getByRole('searchbox'))
+    screen.getByRole('searchbox').blur()
+    fireEvent.keyDown(window, { key: 'n' })
+    const dialog = screen.getByRole('dialog', { name: 'New task' })
+    expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveFocus()
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+    expect(within(dialog).getByRole('textbox', { name: 'Title' })).toHaveFocus()
+    await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'n')
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+  })
+
+  it('reveals mobile search with its icon and Cmd/Ctrl K', async () => {
+    const user = await renderApp()
+    const toggle = screen.getByRole('button', { name: 'Search this view…' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => expect(screen.getByRole('searchbox')).toHaveFocus())
+    await user.keyboard('{Escape}')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => expect(screen.getByRole('searchbox')).toHaveFocus())
+  })
+
+  it('distinguishes vertical scrolling from swipes, reveals actions left and completes right', async () => {
+    const user = await renderApp()
+    const row = screen.getByRole('article', { name: firstTask.title })
+    const start = () => fireEvent.touchStart(row, { touches: [{ clientX: 180, clientY: 100 }] })
+    start()
+    fireEvent.touchMove(row, { touches: [{ clientX: 185, clientY: 180 }] })
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 280, clientY: 220 }] })
+    expect(request).toHaveBeenCalledTimes(1)
+    start()
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 80, clientY: 105 }] })
+    expect(within(row).getByRole('button', { name: 'Postpone' })).toBeInTheDocument()
+    await user.click(within(row).getByRole('button', { name: 'Move' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }))
+    request.mockResolvedValueOnce({ task: { ...firstTask, status: 'COMPLETED' } })
+    start()
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 280, clientY: 105 }] })
+    await waitFor(() => expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { status: 'COMPLETED' } }))
+  })
+
+  it('allows an assignee right-swipe completion but never left-swipe owner actions', async () => {
+    const user = await renderApp()
+    const assigned = { ...firstTask, ownerId: 'someone-else' }
+    request.mockResolvedValueOnce({ tasks: [assigned] })
+    await user.click(screen.getByRole('button', { name: 'Assigned to me' }))
+    const row = await screen.findByRole('article', { name: firstTask.title })
+    fireEvent.touchStart(row, { touches: [{ clientX: 180, clientY: 100 }] })
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 80, clientY: 100 }] })
+    expect(within(row).queryByRole('button', { name: 'Postpone' })).not.toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: 'Move' })).not.toBeInTheDocument()
+    request.mockResolvedValueOnce({ task: { ...assigned, status: 'COMPLETED' } })
+    fireEvent.touchStart(row, { touches: [{ clientX: 80, clientY: 100 }] })
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 180, clientY: 100 }] })
+    await waitFor(() => expect(request).toHaveBeenLastCalledWith('/tasks/first', { method: 'PATCH', body: { status: 'COMPLETED' } }))
   })
 })
