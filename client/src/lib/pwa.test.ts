@@ -216,6 +216,14 @@ describe('privacy-preserving service worker', () => {
 })
 
 describe('installable public assets', () => {
+  it('declares mobile web app capability while retaining Apple support', () => {
+    const html = readFileSync(new NodeURL('../../index.html', import.meta.url), 'utf8')
+    const document = new DOMParser().parseFromString(html, 'text/html')
+    for (const name of ['mobile-web-app-capable', 'apple-mobile-web-app-capable']) {
+      expect(document.querySelector(`meta[name="${name}"]`)?.getAttribute('content')).toBe('yes')
+    }
+  })
+
   it('provides a standalone manifest with real 192px and 512px PNGs', () => {
     const manifest = JSON.parse(readFileSync(publicFile('manifest.webmanifest'), 'utf8'))
     expect(manifest).toMatchObject({ id: '/', start_url: '/', scope: '/', display: 'standalone' })
